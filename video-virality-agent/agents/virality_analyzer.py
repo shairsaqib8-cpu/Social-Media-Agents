@@ -153,28 +153,43 @@ def _image_b64(path: str) -> tuple[str, str]:
 
 
 def _transcribe_audio(video_path: str, client: Groq) -> str:
-    """Extract and transcribe audio from video using Groq Whisper."""
+    """Extract audio from video using bundled ffmpeg via imageio, then transcribe with Groq Whisper."""
+    tmp_audio = None
     try:
+        import imageio_ffmpeg
         import subprocess
+
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
         tmp_audio = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
         tmp_audio.close()
+
         result = subprocess.run(
-            ["ffmpeg", "-i", video_path, "-vn", "-ar", "16000", "-ac", "1",
-             "-b:a", "64k", tmp_audio.name, "-y", "-loglevel", "quiet"],
-            timeout=60, capture_output=True
+            [ffmpeg_exe, "-i", video_path, "-vn", "-ar", "16000", "-ac", "1",
+             "-b:a", "64k", tmp_audio.name, "-y"],
+            timeout=120, capture_output=True
         )
         if result.returncode != 0:
             return ""
+
+        file_size = os.path.getsize(tmp_audio.name)
+        if file_size < 1000:
+            return ""
+
         with open(tmp_audio.name, "rb") as f:
             transcription = client.audio.transcriptions.create(
                 file=(Path(tmp_audio.name).name, f.read()),
                 model="whisper-large-v3-turbo",
                 response_format="text",
             )
-        os.unlink(tmp_audio.name)
         return str(transcription)[:3000]
-    except Exception:
+    except Exception as e:
         return ""
+    finally:
+        if tmp_audio and os.path.exists(tmp_audio.name):
+            try:
+                os.unlink(tmp_audio.name)
+            except Exception:
+                pass
 
 
 def _analyze_audio_quality(transcript: str, duration_sec: float) -> dict:

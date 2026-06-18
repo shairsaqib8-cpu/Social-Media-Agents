@@ -7,3 +7,5 @@ youtube-transcript-api
 yt-dlp
 python-multipart
 opencv-python
+moviepy
+imageio-ffmpeg
