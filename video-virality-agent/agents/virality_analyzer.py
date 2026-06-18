@@ -36,15 +36,24 @@ def analyze_thumbnail(image_path: str) -> dict:
     client = _client()
     b64, mime = _image_b64(image_path)
 
-    prompt = """You are a YouTube thumbnail expert. Analyze this thumbnail and respond with valid JSON only — no markdown, no explanation.
+    prompt = """You are a brutal YouTube thumbnail critic hired to tell creators the truth. Your job is to identify exactly why a thumbnail will or will not get clicks in a crowded feed. Be specific — name colors, text placement, facial expressions, contrast issues. Do NOT be encouraging if the thumbnail is bad.
 
-Return exactly this structure:
+SCORING RULES:
+- Score based on real CTR potential in a competitive YouTube feed
+- A thumbnail without a face scores max 60 unless it has exceptional visual hook
+- Unreadable or no text on thumbnail: penalize title_power hard
+- Low contrast or dark/muddy image: penalize heavily
+- Generic or stock-looking image: F grade territory
+- Grade: A=85+, B=70-84, C=50-69, D=35-49, F=below 35
+
+Respond with valid JSON only — no markdown:
 {
   "score": <0-100 integer>,
   "grade": "<A/B/C/D/F>",
-  "strengths": ["...", "..."],
-  "weaknesses": ["...", "..."],
-  "improvements": ["...", "..."],
+  "ctr_verdict": "<one honest sentence on whether this thumbnail will get clicked in a real feed>",
+  "strengths": ["<specific strength with detail>"],
+  "weaknesses": ["<specific weakness with exact detail — color, placement, text, etc>"],
+  "improvements": ["<exact actionable fix>", "<another fix>", "<another fix>"],
   "elements": {
     "has_face": <true/false>,
     "has_text": <true/false>,
@@ -87,19 +96,43 @@ def analyze_video_content(
     )
     transcript_excerpt = transcript[:1500] if transcript else "No transcript available."
 
-    prompt = f"""You are a YouTube virality expert. Analyze this video and return valid JSON only — no markdown.
+    view_count = stats.get('view_count', 0)
+    like_count = stats.get('like_count', 0)
+    comment_count = stats.get('comment_count', 0)
+    like_ratio = round((like_count / view_count * 100), 2) if view_count > 0 else 0
+    comment_ratio = round((comment_count / view_count * 100), 2) if view_count > 0 else 0
 
+    prompt = f"""You are a brutally honest YouTube performance analyst hired by a content team to audit their videos. Your job is NOT to encourage — it is to diagnose WHY a video failed or succeeded and give actionable fixes. Do not sugarcoat. Be specific, harsh where warranted, and data-driven.
+
+SCORING RULES (follow strictly):
+- The virality_score MUST be anchored to REAL performance data first:
+  * Under 1,000 views: score cannot exceed 35 regardless of content quality
+  * 1,000–10,000 views: score range 25–55
+  * 10,000–100,000 views: score range 45–75
+  * 100,000–1M views: score range 65–90
+  * 1M+ views: score range 80–100
+- A like ratio below 2% is a failure signal — penalize heavily
+- A comment ratio below 0.1% means the content did not spark conversation — penalize
+- If transcript is weak/missing, penalize hook_strength and content_depth hard
+- Grade MUST match score: A=85+, B=70-84, C=50-69, D=35-49, F=below 35
+
+VIDEO DATA:
 Title: {title}
 Description: {description[:500]}
-Tags: {', '.join(tags[:20])}
+Tags: {', '.join(tags[:20]) if tags else 'None'}
 Duration: {duration}
-Stats: {stats_block}
+Views: {view_count:,}
+Likes: {like_count:,} ({like_ratio}% like ratio)
+Comments: {comment_count:,} ({comment_ratio}% comment ratio)
 Transcript excerpt: {transcript_excerpt}
 
-Return exactly this structure:
+Be direct. If the title is weak, say exactly why. If the hook fails, explain what a viewer sees in the first 5 seconds and why they click away. Name the specific problems, not generic advice.
+
+Return valid JSON only — no markdown:
 {{
-  "virality_score": <0-100 integer>,
+  "virality_score": <0-100 integer, strictly anchored to performance data above>,
   "grade": "<A/B/C/D/F>",
+  "performance_verdict": "<one brutal honest sentence on why this video performed the way it did>",
   "breakdown": {{
     "hook_strength": <0-100>,
     "title_power": <0-100>,
@@ -108,22 +141,22 @@ Return exactly this structure:
     "content_depth": <0-100>
   }},
   "title_analysis": {{
-    "issues": ["..."],
-    "alternative_titles": ["...", "...", "..."]
+    "issues": ["<specific issue 1>", "<specific issue 2>"],
+    "alternative_titles": ["<better title 1>", "<better title 2>", "<better title 3>"]
   }},
   "hook_analysis": {{
-    "first_line": "...",
-    "verdict": "...",
-    "rewrite": "..."
+    "first_line": "<what happens in first 5 seconds based on transcript>",
+    "verdict": "<harsh honest verdict>",
+    "rewrite": "<exact rewritten hook script, first 15 seconds>"
   }},
   "seo_recommendations": {{
     "suggested_tags": ["...", "...", "..."],
-    "description_tips": ["..."],
+    "description_tips": ["<specific tip>"],
     "chapter_suggestion": ["00:00 - Intro", "..."]
   }},
-  "optimization_tips": ["...", "...", "...", "...", "..."],
-  "viral_potential": "<Low/Medium/High/Very High>",
-  "estimated_improvement": "<percentage range if tips applied>"
+  "optimization_tips": ["<specific fix 1>", "<specific fix 2>", "<specific fix 3>", "<specific fix 4>", "<specific fix 5>"],
+  "viral_potential": "<Low/Medium/High/Very High — based on niche competition and content quality>",
+  "estimated_improvement": "<realistic range if ALL tips applied>"
 }}"""
 
     response = client.chat.completions.create(
@@ -162,10 +195,16 @@ def analyze_uploaded_video(video_path: str) -> dict:
     try:
         if frame_path:
             b64, mime = _image_b64(frame_path)
-            prompt = """You are a YouTube video virality expert analyzing a video frame (from the 3-second hook moment).
-Assess hook strength, visual quality, on-screen elements, pacing feel, and return valid JSON only.
+            prompt = """You are a brutal YouTube video analyst reviewing a frame captured at the 3-second mark — the most critical moment that determines if a viewer stays or leaves. Be honest and specific. If this frame looks boring, amateurish, or fails to create curiosity, say so directly.
 
-Return exactly:
+SCORING RULES:
+- If the frame has no clear subject/face/action visible: hook_strength max 30
+- Static, talking-head with no graphics/text overlay: penalize pacing hard
+- Poor lighting, shaky cam, or low resolution: penalize visual_quality severely
+- No visible emotion or energy: engagement_signals should be low
+- Grade: A=85+, B=70-84, C=50-69, D=35-49, F=below 35
+
+Return valid JSON only:
 {
   "virality_score": <0-100>,
   "grade": "<A/B/C/D/F>",
@@ -176,10 +215,13 @@ Return exactly:
     "pacing": <0-100>,
     "content_depth": <0-100>
   },
-  "hook_analysis": {"verdict": "...", "rewrite": "..."},
-  "optimization_tips": ["...", "...", "...", "...", "..."],
+  "hook_analysis": {
+    "verdict": "<specific honest verdict on what a viewer sees at 3 seconds and why they stay or leave>",
+    "rewrite": "<exactly what should happen in first 15 seconds to maximize retention>"
+  },
+  "optimization_tips": ["<specific fix>", "<specific fix>", "<specific fix>", "<specific fix>", "<specific fix>"],
   "viral_potential": "<Low/Medium/High/Very High>",
-  "estimated_improvement": "<range if tips applied>"
+  "estimated_improvement": "<realistic range if tips applied>"
 }"""
             response = client.chat.completions.create(
                 model=VISION_MODEL,
@@ -228,20 +270,25 @@ def compare_competitors(main_title: str, competitors: list[dict]) -> dict:
         f"{i+1}. \"{c['title']}\" by {c['channel']}"
         for i, c in enumerate(competitors)
     )
-    prompt = f"""Compare this video against its competitors and return valid JSON only.
+    prompt = f"""You are a competitive intelligence analyst. Compare this video's title against top-performing competitor videos in the same niche. Be brutally honest about where this video loses to competitors — in title psychology, keyword targeting, or positioning. Do not be diplomatic.
 
 My Video: "{main_title}"
 
-Top Competitor Videos:
+Top Competing Videos (ranked by views):
 {comp_lines}
 
-Return:
+Identify specifically:
+- What the competitors do in their titles that this video does not
+- Whether this video's title is weaker, generic, or fails to compete
+- What angle or gap exists that competitors have NOT covered
+
+Return valid JSON only:
 {{
-  "summary": "...",
-  "insights": ["...", "...", "..."],
-  "title_edge": "...",
-  "gaps_to_exploit": ["...", "..."],
-  "positioning_advice": "..."
+  "summary": "<honest 2-sentence verdict on how this video competes>",
+  "insights": ["<specific insight 1>", "<specific insight 2>", "<specific insight 3>"],
+  "title_edge": "<does this title beat competitors or lose? why specifically?>",
+  "gaps_to_exploit": ["<real gap competitors missed>", "<another real gap>"],
+  "positioning_advice": "<exact repositioning strategy to beat the top competitor>"
 }}"""
 
     response = client.chat.completions.create(
