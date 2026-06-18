@@ -94,15 +94,18 @@ async def analyze_url(request: Request):
             },
             duration=meta["duration"],
         )
-    except ValueError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+    except (ValueError, Exception) as e:
+        raise HTTPException(status_code=503, detail=f"AI analysis failed: {str(e)}")
 
     # Competitor comparison
     competitor_videos = fetch_competitor_videos(
         query=" ".join(meta["title"].split()[:5]),
         exclude_id=video_id,
     )
-    competitor_analysis = compare_competitors(meta["title"], competitor_videos)
+    try:
+        competitor_analysis = compare_competitors(meta["title"], competitor_videos)
+    except Exception:
+        competitor_analysis = {"summary": "Competitor analysis unavailable.", "insights": []}
 
     return {
         "source": "youtube_url",

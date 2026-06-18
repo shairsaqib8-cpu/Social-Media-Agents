@@ -41,10 +41,56 @@ def _client() -> Groq:
 
 
 def _parse_json(text: str) -> dict:
+    """Parse JSON from AI response, with multiple fallback strategies."""
     text = text.strip()
+    # Strip markdown code fences
     text = re.sub(r"^```[a-z]*\n?", "", text)
     text = re.sub(r"\n?```$", "", text)
-    return json.loads(text)
+    text = text.strip()
+
+    # Strategy 1: direct parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 2: extract first {...} block
+    try:
+        start = text.index("{")
+        # Find matching closing brace
+        depth = 0
+        for i, ch in enumerate(text[start:], start):
+            if ch == "{": depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return json.loads(text[start:i+1])
+    except (ValueError, json.JSONDecodeError):
+        pass
+
+    # Strategy 3: fix common AI mistakes — trailing commas, unescaped newlines
+    try:
+        fixed = re.sub(r",\s*([\]}])", r"\1", text)          # trailing commas
+        fixed = re.sub(r"\n", " ", fixed)                     # newlines in strings
+        fixed = re.sub(r"(?<!\\)'", '"', fixed)               # single → double quotes
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 4: ask AI to fix its own broken JSON using a cheap model call
+    try:
+        client = _client()
+        repair = client.chat.completions.create(
+            model=TEXT_MODEL,
+            messages=[{"role": "user", "content":
+                f"Fix this broken JSON so it is valid. Return ONLY the fixed JSON, nothing else:\n{text[:3000]}"}],
+            max_tokens=2000, temperature=0,
+        )
+        return json.loads(repair.choices[0].message.content.strip())
+    except Exception:
+        pass
+
+    raise ValueError(f"Could not parse JSON from AI response. First 200 chars: {text[:200]}")
 
 
 def _b64(path: str) -> tuple[str, str]:
