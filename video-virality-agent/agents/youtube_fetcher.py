@@ -26,7 +26,12 @@ def fetch_youtube_metadata(video_id: str) -> dict:
         f"&id={video_id}&key={api_key}"
     )
     r = requests.get(url, timeout=10)
-    r.raise_for_status()
+    if r.status_code == 400:
+        return {"error": "Invalid YouTube API key or bad request. Please set a valid YOUTUBE_API_KEY in your .env file."}
+    if r.status_code == 403:
+        return {"error": "YouTube API quota exceeded or API key not authorized. Check your YOUTUBE_API_KEY."}
+    if not r.ok:
+        return {"error": f"YouTube API error {r.status_code}: {r.text[:200]}"}
     data = r.json()
     if not data.get("items"):
         return {"error": "Video not found"}
@@ -76,7 +81,8 @@ def fetch_competitor_videos(query: str, exclude_id: str = "", max_results: int =
         f"&maxResults=10&order=viewCount&key={api_key}"
     )
     r = requests.get(url, timeout=10)
-    r.raise_for_status()
+    if not r.ok:
+        return []
     items = r.json().get("items", [])
     results = []
     for item in items:

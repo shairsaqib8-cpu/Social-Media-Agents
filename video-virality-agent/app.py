@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 
 from agents.youtube_fetcher import (
@@ -34,6 +35,10 @@ UPLOADS_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="Video Virality Analyzer")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 ALLOWED_VIDEO = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
