@@ -3,6 +3,7 @@ import re
 import json
 import base64
 import tempfile
+import math
 from pathlib import Path
 from groq import Groq
 
@@ -10,34 +11,131 @@ from groq import Groq
 TEXT_MODEL = "llama-3.1-8b-instant"
 VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
-SYSTEM_BRUTAL = """You are Alex Chen, a no-bullshit YouTube growth strategist with 10 years auditing viral content for major brands. You have reviewed 50,000+ videos and you have seen every mistake creators make.
+SYSTEM_BRUTAL = """You are Alex Chen, a ruthless YouTube performance auditor. You have killed more creator careers with honest feedback than built them — and that is why brands pay you. You have zero tolerance for mediocrity.
 
-YOUR RULES — NEVER BREAK THEM:
-1. You do NOT encourage bad work. Praise is only given when genuinely earned.
-2. You diagnose EXACTLY why content fails — specific, named reasons, not vague advice.
-3. You speak to the creator as if their career depends on fixing these issues RIGHT NOW.
-4. You never say things like "good start", "potential", "with some tweaks". Either it works or it doesn't.
-5. Your feedback must be specific enough that a content team can act on it TODAY — rewrite the title, change the hook script, reshoot the opening.
-6. You compare against top-performing videos in the niche, not against the creator's own past work.
-7. A video that failed on YouTube (low views, low engagement) is a FAILED video. Score it as such.
+NON-NEGOTIABLE RULES:
+1. Never soften feedback. If it is bad, say it is bad, say exactly why, and tell them what to do instead.
+2. Every piece of feedback must be SPECIFIC — name the exact second, the exact word, the exact visual failure.
+3. Do not say "consider", "might", "could". Say "change this", "cut this", "redo this".
+4. Do not list strengths unless they genuinely exist and are worth mentioning.
+5. Your output will be shared with a production team who needs to act on it immediately.
+6. The score you receive is already computed from real data. Do not override it. Write your analysis to MATCH and EXPLAIN that score — not to justify a higher one."""
 
-Your scoring must reflect TRUTH, not kindness."""
+SYSTEM_VISION = """You are Alex Chen, YouTube thumbnail and hook frame specialist. You have split-tested 10,000+ thumbnails and know exactly what gets 8%+ CTR vs what dies at 1%.
 
-SYSTEM_VISION = """You are Alex Chen, a YouTube thumbnail and video hook specialist. You have split-tested 10,000+ thumbnails and you know exactly what gets clicks and what gets scrolled past.
-
-YOUR RULES:
-1. Look at every pixel critically — lighting, composition, emotion, text readability, contrast.
-2. Compare this thumbnail/frame against what MrBeast, MKBHD, and top creators in the same niche produce.
-3. Be specific: "the text is too small and placed over a busy background making it unreadable on mobile" beats "improve text placement".
-4. If it's bad, say it's bad. Don't soften it.
-5. Score it as a real viewer would judge it in 0.3 seconds while scrolling YouTube."""
+RULES:
+1. Judge every frame as a cold viewer scrolling at speed — you have 0.3 seconds.
+2. Compare to MrBeast, MKBHD, top creators in this niche. Name the gap.
+3. Be pixel-level specific: "the subject's face is underexposed, emotion is unreadable on mobile" not "improve lighting".
+4. The score is pre-computed. Write your analysis to explain and match it."""
 
 
-def _client() -> Groq:
-    key = os.getenv("GROQ_API_KEY", "")
-    if not key:
-        raise ValueError("GROQ_API_KEY not set in .env")
-    return Groq(api_key=key)
+# ─── Hard score computation (Python, not AI) ─────────────────────────────────
+
+def _compute_content_score(view_count: int, like_ratio: float, comment_ratio: float,
+                            has_transcript: bool, tag_count: int, has_description: bool) -> int:
+    """Compute a hard virality score anchored entirely to real data."""
+    # Base from views
+    if view_count < 500:
+        base = 5
+    elif view_count < 1000:
+        base = 12
+    elif view_count < 3000:
+        base = 18
+    elif view_count < 5000:
+        base = 24
+    elif view_count < 10000:
+        base = 32
+    elif view_count < 25000:
+        base = 40
+    elif view_count < 50000:
+        base = 50
+    elif view_count < 100000:
+        base = 60
+    elif view_count < 250000:
+        base = 70
+    elif view_count < 500000:
+        base = 78
+    elif view_count < 1000000:
+        base = 85
+    else:
+        base = 92
+
+    # Like ratio adjustments (industry average viral = 5-8%)
+    if like_ratio == 0:
+        base -= 12
+    elif like_ratio < 1:
+        base -= 10
+    elif like_ratio < 2:
+        base -= 7
+    elif like_ratio < 3:
+        base -= 3
+    elif like_ratio >= 5:
+        base += 3
+
+    # Comment ratio adjustments
+    if comment_ratio == 0:
+        base -= 8
+    elif comment_ratio < 0.05:
+        base -= 6
+    elif comment_ratio < 0.1:
+        base -= 3
+    elif comment_ratio >= 0.5:
+        base += 2
+
+    # SEO penalties
+    if tag_count == 0:
+        base -= 5
+    if not has_description:
+        base -= 4
+    if not has_transcript:
+        base -= 3
+
+    score = max(3, min(100, base))
+
+    # Grade
+    if score >= 85:
+        grade = "A"
+    elif score >= 70:
+        grade = "B"
+    elif score >= 50:
+        grade = "C"
+    elif score >= 35:
+        grade = "D"
+    else:
+        grade = "F"
+
+    return score, grade
+
+
+def _compute_frame_score(frame_data: dict) -> tuple[int, str]:
+    """Enforce hard caps on vision analysis scores based on what AI found."""
+    has_face = frame_data.get("has_face", False)
+    has_text_overlay = frame_data.get("has_text_overlay", False)
+    good_lighting = frame_data.get("good_lighting", False)
+    high_energy = frame_data.get("high_energy", False)
+    professional_setup = frame_data.get("professional_setup", False)
+    visible_emotion = frame_data.get("visible_emotion", False)
+
+    score = 55  # Start from average
+    if not has_face:
+        score -= 15
+    if not has_text_overlay:
+        score -= 10
+    if not good_lighting:
+        score -= 12
+    if not high_energy:
+        score -= 10
+    if not professional_setup:
+        score -= 8
+    if not visible_emotion:
+        score -= 8
+    if has_face and good_lighting and high_energy and visible_emotion:
+        score += 15  # Only reward if truly earns it
+
+    score = max(5, min(95, score))
+    grade = "A" if score >= 85 else "B" if score >= 70 else "C" if score >= 50 else "D" if score >= 35 else "F"
+    return score, grade
 
 
 def _parse_json(text: str) -> dict:
@@ -54,69 +152,169 @@ def _image_b64(path: str) -> tuple[str, str]:
         return base64.standard_b64encode(f.read()).decode(), mime
 
 
+def _transcribe_audio(video_path: str, client: Groq) -> str:
+    """Extract and transcribe audio from video using Groq Whisper."""
+    try:
+        import subprocess
+        tmp_audio = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+        tmp_audio.close()
+        result = subprocess.run(
+            ["ffmpeg", "-i", video_path, "-vn", "-ar", "16000", "-ac", "1",
+             "-b:a", "64k", tmp_audio.name, "-y", "-loglevel", "quiet"],
+            timeout=60, capture_output=True
+        )
+        if result.returncode != 0:
+            return ""
+        with open(tmp_audio.name, "rb") as f:
+            transcription = client.audio.transcriptions.create(
+                file=(Path(tmp_audio.name).name, f.read()),
+                model="whisper-large-v3-turbo",
+                response_format="text",
+            )
+        os.unlink(tmp_audio.name)
+        return str(transcription)[:3000]
+    except Exception:
+        return ""
+
+
+def _analyze_audio_quality(transcript: str, duration_sec: float) -> dict:
+    """Derive audio quality signals from transcript content."""
+    if not transcript:
+        return {"wpm": 0, "filler_count": 0, "filler_ratio": 0, "has_hook_in_first_30": False, "starts_with_generic": True}
+
+    words = transcript.split()
+    word_count = len(words)
+    wpm = round((word_count / duration_sec) * 60) if duration_sec > 0 else 0
+
+    filler_words = ["um", "uh", "like", "you know", "basically", "literally", "right", "so", "anyway"]
+    filler_count = sum(transcript.lower().count(f) for f in filler_words)
+    filler_ratio = round(filler_count / max(word_count, 1) * 100, 1)
+
+    generic_openers = ["hey guys", "hey everyone", "welcome back", "what's up guys", "hello everyone",
+                       "hey what's up", "so today", "in this video", "hi guys", "hi everyone"]
+    first_50 = transcript[:200].lower()
+    starts_with_generic = any(opener in first_50 for opener in generic_openers)
+
+    hook_triggers = ["secret", "never", "mistake", "shocking", "truth", "nobody tells you",
+                     "i tried", "i tested", "what if", "why", "how i", "changed my", "worst", "best"]
+    first_30_words = " ".join(words[:40]).lower()
+    has_hook_in_first_30 = any(t in first_30_words for t in hook_triggers)
+
+    return {
+        "wpm": wpm,
+        "filler_count": filler_count,
+        "filler_ratio": filler_ratio,
+        "has_hook_in_first_30": has_hook_in_first_30,
+        "starts_with_generic": starts_with_generic,
+        "word_count": word_count,
+    }
+
+
+# ─── Public API ───────────────────────────────────────────────────────────────
+
 def analyze_thumbnail(image_path: str) -> dict:
     client = _client()
     b64, mime = _image_b64(image_path)
 
-    prompt = """Audit this YouTube thumbnail. A real viewer has 0.3 seconds to notice it while scrolling. Tell me if this thumbnail survives that test.
-
-HARD SCORING RULES — DO NOT DEVIATE:
-- No human face: maximum score 55 (faces drive clicks, no exceptions)
-- Text present but unreadable on a phone screen: deduct 20 points immediately
-- Dark, muddy, or low-contrast image: maximum score 45
-- Generic/stock-photo feel with no personality: maximum score 40, grade D or F
-- No clear focal point or emotion: maximum score 50
-- Cluttered with too many elements competing: deduct 15 points
-- If this thumbnail looks like it was made in 10 minutes with no strategy: say so directly
-- Grade: A=85+, B=70-84, C=50-69, D=35-49, F=below 35
-
-Be specific. Name exact visual elements. Tell them what a top YouTuber in this niche does differently.
-
-Return valid JSON only — no markdown, no explanation outside JSON:
+    # Step 1: Get factual data from vision model
+    fact_prompt = """Look at this YouTube thumbnail. Answer ONLY with valid JSON, no markdown:
 {
-  "score": <0-100 integer, follow scoring rules strictly>,
-  "grade": "<A/B/C/D/F>",
-  "ctr_verdict": "<one direct sentence: will this get clicked or scrolled past, and why exactly>",
-  "what_viewer_sees_in_03_seconds": "<exactly what registers in a viewer's brain at first glance>",
-  "strengths": ["<only list genuine strengths, skip if none>"],
+  "has_face": <true/false>,
+  "face_shows_strong_emotion": <true/false>,
+  "has_text": <true/false>,
+  "text_is_readable_on_mobile": <true/false>,
+  "contrast_is_strong": <true/false>,
+  "image_is_bright_and_clear": <true/false>,
+  "has_clear_focal_point": <true/false>,
+  "looks_professional": <true/false>,
+  "background_is_clean": <true/false>,
+  "would_stop_scroll": <true/false>
+}"""
+
+    fact_resp = client.chat.completions.create(
+        model=VISION_MODEL,
+        messages=[{"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+            {"type": "text", "text": fact_prompt},
+        ]}],
+        max_tokens=300, temperature=0.1,
+    )
+    try:
+        facts = _parse_json(fact_resp.choices[0].message.content)
+    except Exception:
+        facts = {}
+
+    # Step 2: Compute score from facts (not from AI opinion)
+    score = 40
+    if facts.get("has_face"): score += 10
+    if facts.get("face_shows_strong_emotion"): score += 8
+    if facts.get("has_text"): score += 5
+    if facts.get("text_is_readable_on_mobile"): score += 7
+    if facts.get("contrast_is_strong"): score += 5
+    if facts.get("image_is_bright_and_clear"): score += 5
+    if facts.get("has_clear_focal_point"): score += 5
+    if facts.get("looks_professional"): score += 8
+    if facts.get("background_is_clean"): score += 5
+    if facts.get("would_stop_scroll"): score += 7
+
+    # Hard penalties
+    if not facts.get("has_face"): score -= 12
+    if not facts.get("contrast_is_strong"): score -= 10
+    if not facts.get("text_is_readable_on_mobile") and facts.get("has_text"): score -= 12
+    if not facts.get("looks_professional"): score -= 10
+
+    score = max(5, min(95, score))
+    grade = "A" if score >= 85 else "B" if score >= 70 else "C" if score >= 50 else "D" if score >= 35 else "F"
+
+    # Step 3: Get specific written critique
+    critique_prompt = f"""This YouTube thumbnail scored {score}/100 ({grade}) based on objective analysis.
+
+Detected facts: {json.dumps(facts, indent=2)}
+
+Now write the brutal, specific critique. Be precise — name exact visual elements, colors, placement, what a competitor thumbnail would do differently.
+
+Return valid JSON only:
+{{
+  "score": {score},
+  "grade": "{grade}",
+  "ctr_verdict": "<one direct sentence: will this thumbnail get clicked in a competitive YouTube feed and why>",
+  "what_viewer_sees_in_03_seconds": "<exactly what registers in a viewer brain at first glance — be visual and specific>",
+  "strengths": ["<only list genuine strengths, max 2, skip entirely if none>"],
   "weaknesses": [
-    "<specific weakness 1 — name the exact element and why it fails>",
-    "<specific weakness 2>",
-    "<specific weakness 3>"
+    "<specific failure 1 — name the exact element>",
+    "<specific failure 2>",
+    "<specific failure 3>"
   ],
   "improvements": [
-    "<exact change to make — be specific about colors, fonts, layout, face position>",
+    "<exact change: colors, layout, font size, expression — actionable today>",
     "<exact change 2>",
     "<exact change 3>"
   ],
-  "competitor_comparison": "<how does this compare to top thumbnails in this niche? what are they doing that this thumbnail is missing?>",
-  "elements": {
-    "has_face": <true/false>,
-    "has_text": <true/false>,
-    "text_readable": <true/false>,
-    "contrast_strong": <true/false>,
-    "emotion_visible": <true/false>,
-    "brand_consistent": <true/false>
-  },
-  "ctr_potential": "<Low/Medium/High/Very High>"
-}"""
+  "audio_visual_alignment": "N/A — thumbnail only",
+  "ctr_potential": "<Low/Medium/High/Very High>",
+  "elements": {json.dumps(facts)}
+}}"""
 
-    response = client.chat.completions.create(
-        model=VISION_MODEL,
+    critique_resp = client.chat.completions.create(
+        model=TEXT_MODEL,
         messages=[
-            {"role": "system", "content": SYSTEM_VISION},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-                    {"type": "text", "text": prompt},
-                ],
-            },
+            {"role": "system", "content": SYSTEM_BRUTAL},
+            {"role": "user", "content": critique_prompt},
         ],
-        max_tokens=1000,
-        temperature=0.3,
+        max_tokens=900, temperature=0.2,
     )
-    return _parse_json(response.choices[0].message.content)
+    result = _parse_json(critique_resp.choices[0].message.content)
+    # Always enforce computed score
+    result["score"] = score
+    result["grade"] = grade
+    return result
+
+
+def _client() -> Groq:
+    key = os.getenv("GROQ_API_KEY", "")
+    if not key:
+        raise ValueError("GROQ_API_KEY not set in .env")
+    return Groq(api_key=key)
 
 
 def analyze_video_content(
@@ -134,129 +332,106 @@ def analyze_video_content(
     comment_count = stats.get('comment_count', 0)
     like_ratio = round((like_count / view_count * 100), 2) if view_count > 0 else 0
     comment_ratio = round((comment_count / view_count * 100), 2) if view_count > 0 else 0
-    transcript_excerpt = transcript[:2000] if transcript else "NO TRANSCRIPT — creator did not speak clearly or video is silent."
+    has_transcript = bool(transcript and len(transcript) > 50)
+    has_description = bool(description and len(description) > 30)
+    tag_count = len(tags) if tags else 0
 
-    # Determine score ceiling based on real performance
-    if view_count < 500:
-        score_ceiling = 20
-        performance_tier = "DEAD ON ARRIVAL — under 500 views is a complete failure"
-    elif view_count < 1000:
-        score_ceiling = 28
-        performance_tier = "FAILED — under 1,000 views means the algorithm rejected this content"
-    elif view_count < 5000:
-        score_ceiling = 38
-        performance_tier = "POOR — under 5k views means very limited reach"
-    elif view_count < 10000:
-        score_ceiling = 48
-        performance_tier = "BELOW AVERAGE — 5k-10k views is not viral by any standard"
-    elif view_count < 50000:
-        score_ceiling = 62
-        performance_tier = "MEDIOCRE — reached some people but far from viral"
-    elif view_count < 100000:
-        score_ceiling = 72
-        performance_tier = "DECENT — approaching 100k but still not breaking out"
-    elif view_count < 500000:
-        score_ceiling = 83
-        performance_tier = "GOOD — solid performance but not viral"
-    elif view_count < 1000000:
-        score_ceiling = 91
-        performance_tier = "STRONG — approaching 1M, real traction"
-    else:
-        score_ceiling = 100
-        performance_tier = "VIRAL — 1M+ views, algorithm loved this"
+    # Compute score in Python — AI cannot override this
+    score, grade = _compute_content_score(
+        view_count, like_ratio, comment_ratio,
+        has_transcript, tag_count, has_description
+    )
 
-    # Additional penalties
-    like_penalty = 15 if like_ratio < 1 else (10 if like_ratio < 2 else (5 if like_ratio < 3 else 0))
-    comment_penalty = 10 if comment_ratio < 0.05 else (5 if comment_ratio < 0.1 else 0)
+    audio = _analyze_audio_quality(transcript or "", 0)
+    transcript_excerpt = (transcript or "NO TRANSCRIPT AVAILABLE")[:2000]
 
-    prompt = f"""You are auditing this YouTube video for a content team. Their goal is to go viral. Give them the truth they need to improve, not comfort.
+    # Additional audio penalties applied to score
+    if audio["starts_with_generic"]:
+        score = max(3, score - 6)
+    if audio["filler_ratio"] > 10:
+        score = max(3, score - 5)
+    if not audio["has_hook_in_first_30"] and has_transcript:
+        score = max(3, score - 4)
 
-═══════════════════════════════════════
-REAL PERFORMANCE DATA (this is what happened):
-═══════════════════════════════════════
+    # Recompute grade after audio penalties
+    grade = "A" if score >= 85 else "B" if score >= 70 else "C" if score >= 50 else "D" if score >= 35 else "F"
+
+    prompt = f"""You are auditing a YouTube video. The score has already been computed from real data: {score}/100 ({grade}).
+Your job is to EXPLAIN why this score is correct with specific, brutal analysis. Do NOT suggest a different score.
+
+═══════════ REAL PERFORMANCE DATA ═══════════
 Title: {title}
 Views: {view_count:,}
-Performance Tier: {performance_tier}
-Like ratio: {like_ratio}% — Industry average for viral content is 4-8%. Below 2% means viewers did not connect.
-Comment ratio: {comment_ratio}% — Below 0.1% means zero conversation was sparked.
-Duration: {duration}
-Tags used: {', '.join(tags[:15]) if tags else 'NONE — major SEO failure'}
-Description (first 500 chars): {description[:500] if description else 'EMPTY — no SEO effort at all'}
-Transcript (first 2000 chars): {transcript_excerpt}
+Like ratio: {like_ratio}% (viral average: 5-8% — below 2% means audience rejected content)
+Comment ratio: {comment_ratio}% (below 0.1% = zero conversation sparked)
+Tags: {tag_count} tags — {', '.join((tags or [])[:10]) or 'NONE'}
+Description: {'Present' if has_description else 'MISSING — critical SEO failure'}
 
-═══════════════════════════════════════
-MANDATORY SCORING CONSTRAINTS:
-═══════════════════════════════════════
-- virality_score HARD CEILING: {score_ceiling}/100 (based on actual view count)
-- Additional deductions already calculated: -{like_penalty} for like ratio, -{comment_penalty} for comment ratio
-- Final score cannot exceed {max(5, score_ceiling - like_penalty - comment_penalty)}
-- DO NOT give a score higher than {max(5, score_ceiling - like_penalty - comment_penalty)}
-- Grade MUST match: A=85+, B=70-84, C=50-69, D=35-49, F=below 35
+═══════════ AUDIO / SCRIPT ANALYSIS ═══════════
+Starts with generic opener (kills retention): {audio['starts_with_generic']}
+Has hook trigger in first 30 seconds: {audio['has_hook_in_first_30']}
+Filler words detected: {audio['filler_count']} ({audio['filler_ratio']}% of words) — above 8% is unprofessional
+Words per minute: {audio['wpm']} (ideal: 130-160 wpm for YouTube)
+Transcript excerpt:
+{transcript_excerpt}
 
-═══════════════════════════════════════
-YOUR AUDIT TASKS:
-═══════════════════════════════════════
-1. TITLE: Is it specific, curiosity-driven, emotionally charged? Or is it generic and forgettable?
-   Compare it to top titles in this niche. Name exactly what words or structure make it weak.
-
-2. HOOK (first 30 seconds): Based on the transcript, what does the viewer hear first?
-   Does it start with a strong promise, a shocking statement, or a relatable problem?
-   Or does it start with "Hey guys welcome back"? (That kills retention instantly.)
-
-3. SEO: Are the tags relevant, specific, and keyword-targeted? Is the description optimized?
-
-4. ENGAGEMENT: Given the like/comment ratio, did this content create any emotional reaction?
-
-5. VERDICT: What is the single biggest reason this video did not perform?
+═══════════ YOUR TASK ═══════════
+1. Title: Is every word earning its place? Does it create a specific curiosity gap or emotion?
+2. Hook (first 30s): Based on transcript, did the creator EARN the viewer's attention immediately or waste it?
+3. Audio-Visual alignment: Does the script match what a viewer would expect to see? Is there coherence?
+4. SEO: Are the tags and description working or invisible?
+5. What is the #1 change that would double performance?
 
 Return valid JSON only — no markdown:
 {{
-  "virality_score": <integer, MUST NOT exceed {max(5, score_ceiling - like_penalty - comment_penalty)}>,
-  "grade": "<A/B/C/D/F matching the score strictly>",
-  "performance_verdict": "<one brutal sentence naming the SINGLE biggest reason this video succeeded or failed — be specific>",
-  "biggest_mistake": "<the #1 thing that killed this video's performance — be direct>",
+  "virality_score": {score},
+  "grade": "{grade}",
+  "performance_verdict": "<one brutal sentence — why this video got the views it got, no sugarcoating>",
+  "biggest_mistake": "<the single most damaging thing in this video — be specific, not generic>",
   "breakdown": {{
-    "hook_strength": <0-100, heavily penalize if transcript starts with generic welcome>,
-    "title_power": <0-100, penalize if title is vague, lacks numbers/emotion/curiosity gap>,
-    "seo_strength": <0-100, penalize if no tags or empty description>,
-    "engagement_signals": <0-100, anchor to actual like/comment ratios>,
-    "content_depth": <0-100, based on transcript quality and topic coverage>
+    "hook_strength": <0-100, must be low if starts_with_generic=true or no hook trigger>,
+    "title_power": <0-100, penalize if no number/emotion/curiosity gap in title>,
+    "seo_strength": <0-100, penalize for missing tags or empty description>,
+    "engagement_signals": <0-100, anchor directly to {like_ratio}% like ratio>,
+    "content_depth": <0-100, based on transcript quality>
+  }},
+  "audio_analysis": {{
+    "verdict": "<is the audio clear, confident, and professionally paced, or does it sound amateur?>",
+    "filler_word_problem": "<are filler words ruining credibility? how many is too many?>",
+    "pacing_verdict": "<too fast, too slow, or right? what is the effect on retention?>",
+    "audio_visual_sync": "<does the narration match what a viewer would see on screen? is there coherence between what is said and what is shown?>",
+    "script_quality": "<is the script tight and purposeful or meandering and unfocused?>"
   }},
   "title_analysis": {{
-    "verdict": "<is the title strong or weak? exactly why?>",
-    "issues": [
-      "<specific issue — e.g. 'Title has no numbers, no curiosity gap, and no emotional trigger'>",
-      "<specific issue 2>",
-      "<specific issue 3>"
-    ],
+    "verdict": "<strong or weak? specifically why>",
+    "issues": ["<exact issue — e.g. no number, no emotion word, too generic>", "<issue 2>"],
     "alternative_titles": [
-      "<rewritten title 1 — more specific, curiosity-driven, with power words>",
+      "<rewritten title 1 — specific, curiosity-driven, power words>",
       "<rewritten title 2 — different angle>",
-      "<rewritten title 3 — numbers/data driven>"
+      "<rewritten title 3 — number/data driven>"
     ]
   }},
   "hook_analysis": {{
-    "what_creator_actually_said": "<exact quote or summary of first 30 seconds from transcript>",
-    "verdict": "<harsh verdict: did the hook earn the viewer's next 30 seconds or not?>",
-    "why_viewers_left": "<specific reason retention dropped — based on what you see in transcript>",
-    "rewritten_hook": "<exact script rewrite for first 30 seconds — word for word what they should say>"
+    "what_creator_actually_said": "<exact quote or close paraphrase of first 30 seconds>",
+    "verdict": "<did this hook earn the viewer's next 30 seconds? be harsh>",
+    "why_viewers_left": "<specific moment and reason viewers clicked away>",
+    "rewritten_hook": "<exact word-for-word replacement script for first 30 seconds>"
   }},
   "seo_analysis": {{
-    "tag_verdict": "<are these tags killing or helping reach?>",
-    "suggested_tags": ["<high-volume specific tag>", "<long-tail tag>", "<niche tag>", "<trending tag>", "<competitor tag>"],
-    "description_verdict": "<is the description SEO-optimized or wasted space?>",
-    "description_first_line": "<rewritten first line of description — keyword rich, 150 chars>",
-    "chapter_suggestion": ["00:00 - Hook", "01:30 - ...", "..."]
+    "tag_verdict": "<are these tags helping or useless?>",
+    "suggested_tags": ["<high-volume tag>", "<long-tail tag>", "<niche tag>", "<trending tag>", "<competitor tag>"],
+    "description_verdict": "<is the description optimized or wasted?>",
+    "description_rewrite": "<rewritten first 150 chars of description — keyword-rich>"
   }},
   "optimization_tips": [
-    "<tip 1 — specific and actionable, not generic>",
+    "<tip 1 — specific, actionable, not generic>",
     "<tip 2>",
     "<tip 3>",
     "<tip 4>",
     "<tip 5>"
   ],
-  "viral_potential": "<Low/Medium/High/Very High — honest assessment of this niche and content format>",
-  "if_reshot_today": "<if they reshoot this video with all fixes applied, what realistic view count could they hit and why>"
+  "viral_potential": "<Low/Medium/High/Very High>",
+  "if_reshot_today": "<realistic view count they could hit if ALL fixes are applied, and exactly why>"
 }}"""
 
     response = client.chat.completions.create(
@@ -266,9 +441,13 @@ Return valid JSON only — no markdown:
             {"role": "user", "content": prompt},
         ],
         max_tokens=2000,
-        temperature=0.2,
+        temperature=0.15,
     )
-    return _parse_json(response.choices[0].message.content)
+    result = _parse_json(response.choices[0].message.content)
+    # Always enforce Python-computed score — AI cannot override
+    result["virality_score"] = score
+    result["grade"] = grade
+    return result
 
 
 def analyze_uploaded_video(video_path: str) -> dict:
@@ -282,12 +461,10 @@ def analyze_uploaded_video(video_path: str) -> dict:
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = cap.get(cv2.CAP_PROP_FPS) or 30
         duration_sec = total / fps if fps else 0
-
         target = min(int(3 * fps), max(0, total - 1))
         cap.set(cv2.CAP_PROP_POS_FRAMES, target)
         ret, frame = cap.read()
         cap.release()
-
         if ret:
             tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
             cv2.imwrite(tmp.name, frame)
@@ -296,104 +473,127 @@ def analyze_uploaded_video(video_path: str) -> dict:
     except Exception:
         pass
 
+    # Transcribe audio
+    transcript = _transcribe_audio(video_path, client)
+    audio = _analyze_audio_quality(transcript, duration_sec)
+
     try:
         if frame_path:
             b64, mime = _image_b64(frame_path)
-            prompt = f"""This is the frame at the 3-second mark of a YouTube video — the exact moment the algorithm decides if a viewer stays or clicks away. Average viewer retention drop happens in the first 5 seconds. This frame must EARN the viewer's attention.
 
-Video duration: ~{int(duration_sec)} seconds
+            # Step 1: Get objective facts from frame
+            fact_prompt = """Analyze this YouTube video frame (captured at 3-second mark). Return JSON only:
+{
+  "has_face": <true/false>,
+  "good_lighting": <true/false>,
+  "visible_emotion": <true/false>,
+  "high_energy": <true/false>,
+  "professional_setup": <true/false>,
+  "has_text_overlay": <true/false>,
+  "background_is_clean": <true/false>,
+  "camera_is_stable": <true/false>,
+  "subject_fills_frame": <true/false>,
+  "would_make_viewer_curious": <true/false>
+}"""
+            fact_resp = client.chat.completions.create(
+                model=VISION_MODEL,
+                messages=[{"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                    {"type": "text", "text": fact_prompt},
+                ]}],
+                max_tokens=250, temperature=0.1,
+            )
+            try:
+                facts = _parse_json(fact_resp.choices[0].message.content)
+            except Exception:
+                facts = {}
 
-Judge this frame the way a cold viewer would — someone who never heard of this creator, seeing this recommended on their feed.
+            # Step 2: Compute score from facts
+            score, grade = _compute_frame_score(facts)
 
-HARD SCORING RULES:
-- Static talking head, no graphics, no text overlay, no movement: hook_strength max 25
-- Poor/flat lighting that makes the subject look unprofessional: visual_quality max 40
-- No visible emotion or energy on subject's face: engagement_signals max 30
-- Background is messy, distracting, or looks like a bedroom with no setup: penalize 15 points
-- No text overlay showing what the video is about: hook_strength max 35
-- Looks like it was filmed on a phone with no production thought: visual_quality max 45
-- Grade: A=85+, B=70-84, C=50-69, D=35-49, F=below 35
+            # Apply audio penalties
+            if audio["starts_with_generic"]:
+                score = max(3, score - 8)
+            if audio["filler_ratio"] > 10:
+                score = max(3, score - 6)
+            if not audio["has_hook_in_first_30"]:
+                score = max(3, score - 5)
+            grade = "A" if score >= 85 else "B" if score >= 70 else "C" if score >= 50 else "D" if score >= 35 else "F"
 
-Compare to how top creators in any niche open their videos. Be specific.
+            critique_prompt = f"""This video frame (at 3-second hook mark) scored {score}/100 ({grade}).
+
+Frame facts: {json.dumps(facts, indent=2)}
+
+Audio/script facts:
+- Starts with generic opener: {audio['starts_with_generic']}
+- Has hook trigger in first 30s: {audio['has_hook_in_first_30']}
+- Filler word ratio: {audio['filler_ratio']}%
+- Words per minute: {audio['wpm']}
+- Transcript (first 500 chars): {transcript[:500] if transcript else 'NO AUDIO TRANSCRIBED'}
+
+Write a brutal specific audit. The score is {score}/{grade} — do not change it, explain it.
 
 Return valid JSON only:
 {{
-  "virality_score": <0-100, follow rules strictly>,
-  "grade": "<A/B/C/D/F>",
-  "first_impression": "<what does a cold viewer think in 0.3 seconds seeing this frame?>",
+  "virality_score": {score},
+  "grade": "{grade}",
+  "first_impression": "<what does a cold viewer think/feel in 0.3 seconds at this frame — be visual and specific>",
   "breakdown": {{
-    "hook_strength": <0-100>,
-    "visual_quality": <0-100>,
-    "engagement_signals": <0-100>,
-    "pacing": <0-100>,
+    "hook_strength": <0-100, heavily penalize if no text overlay or generic opener>,
+    "visual_quality": <0-100, based on lighting/setup facts>,
+    "engagement_signals": <0-100, based on emotion/energy facts>,
+    "pacing": <0-100, based on wpm and transcript quality>,
     "content_depth": <0-100>
   }},
-  "hook_analysis": {{
-    "verdict": "<exactly what works or fails at the 3-second mark and why>",
-    "what_top_creators_do_instead": "<specific example of how a top YouTuber would open this same video>",
-    "rewritten_opening": "<exact description of what should happen in first 15 seconds: visuals, audio, text overlays, energy>"
+  "audio_analysis": {{
+    "verdict": "<is the audio quality professional or amateurish? be specific>",
+    "filler_word_problem": "<{audio['filler_count']} filler words — is this killing credibility?>",
+    "pacing_verdict": "<{audio['wpm']} wpm — too fast/slow/right? effect on retention?>",
+    "audio_visual_sync": "<does what is being SAID match what is SHOWN on screen? is there coherence or disconnect?>",
+    "script_quality": "<tight and purposeful or rambling? what should be cut?>"
   }},
-  "production_issues": ["<specific production problem>", "<another>"],
+  "hook_analysis": {{
+    "verdict": "<exactly why this 3-second frame earns or loses the viewer — be specific to the frame>",
+    "what_top_creators_do_instead": "<specific: how would MrBeast or a top creator in this niche open this same video?>",
+    "rewritten_opening": "<exact description of what should happen visually + script in first 15 seconds>"
+  }},
+  "production_issues": ["<exact production problem from the facts>", "<another>", "<another>"],
   "optimization_tips": [
-    "<specific fix 1 — actionable today>",
+    "<specific fix 1 — frame, audio, or script>",
     "<specific fix 2>",
     "<specific fix 3>",
     "<specific fix 4>",
     "<specific fix 5>"
   ],
   "viral_potential": "<Low/Medium/High/Very High>",
-  "estimated_improvement": "<realistic view count change if opening is reworked>"
+  "estimated_improvement": "<realistic view count change if ALL issues fixed>"
 }}"""
-            response = client.chat.completions.create(
-                model=VISION_MODEL,
-                messages=[
-                    {"role": "system", "content": SYSTEM_VISION},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-                            {"type": "text", "text": prompt},
-                        ],
-                    },
-                ],
-                max_tokens=1200,
-                temperature=0.2,
-            )
-        else:
-            prompt = f"""A video was uploaded but no frame could be extracted (duration ~{int(duration_sec)}s). Give a general framework audit.
-Return valid JSON:
-{{
-  "virality_score": 25,
-  "grade": "D",
-  "first_impression": "Frame extraction failed — cannot assess visual hook",
-  "breakdown": {{"hook_strength": 25, "visual_quality": 25, "engagement_signals": 25, "pacing": 25, "content_depth": 25}},
-  "hook_analysis": {{
-    "verdict": "Cannot assess without visual — but statistically 70% of low-performing videos fail in the first 5 seconds",
-    "what_top_creators_do_instead": "Strong visual hook with text overlay, high energy, immediate value statement in first 3 seconds",
-    "rewritten_opening": "Open with the most shocking/surprising moment of the video. Show result first, explain later. Add text overlay with the core promise."
-  }},
-  "production_issues": ["Frame extraction failed — check video encoding", "Ensure video is not corrupted"],
-  "optimization_tips": [
-    "Start with your most compelling moment — not an intro",
-    "Add bold text overlay in first 3 seconds stating exactly what viewer will learn/see",
-    "Show your face with high emotion in the opening frame",
-    "Cut all 'hey guys welcome back' type intros — they kill retention",
-    "Match your thumbnail exactly to your opening frame for continuity"
-  ],
-  "viral_potential": "Unknown — visual analysis failed",
-  "estimated_improvement": "Fixing the hook alone typically improves average view duration by 40-60%"
-}}"""
+
             response = client.chat.completions.create(
                 model=TEXT_MODEL,
                 messages=[
                     {"role": "system", "content": SYSTEM_BRUTAL},
-                    {"role": "user", "content": prompt},
+                    {"role": "user", "content": critique_prompt},
                 ],
-                max_tokens=800,
-                temperature=0.2,
+                max_tokens=1500, temperature=0.15,
+            )
+        else:
+            score, grade = 15, "F"
+            response = client.chat.completions.create(
+                model=TEXT_MODEL,
+                messages=[
+                    {"role": "system", "content": SYSTEM_BRUTAL},
+                    {"role": "user", "content": f"""Video frame extraction failed. Audio transcript: {transcript[:500] if transcript else 'None'}.
+Audio stats: {json.dumps(audio)}. Score: {score}/{grade}.
+Return default failure JSON with these exact values for virality_score and grade."""},
+                ],
+                max_tokens=600, temperature=0.15,
             )
 
-        return _parse_json(response.choices[0].message.content)
+        result = _parse_json(response.choices[0].message.content)
+        result["virality_score"] = score
+        result["grade"] = grade
+        return result
     finally:
         if frame_path:
             try:
@@ -412,41 +612,32 @@ def compare_competitors(main_title: str, competitors: list[dict]) -> dict:
         for i, c in enumerate(competitors)
     )
 
-    prompt = f"""You are doing a competitor title analysis. Your job is to tell the creator exactly how their title stacks up in a real YouTube search results page where all these videos appear side by side.
+    prompt = f"""Competitor title battle. Every title below appeared in the same YouTube search results. A viewer clicks ONE. Tell me which wins and why my title loses or wins.
 
-A viewer sees all these titles at once. They will click the one that creates the most curiosity, promises the most value, or triggers the strongest emotion.
+MY VIDEO: "{main_title}"
 
-MY VIDEO TITLE: "{main_title}"
-
-COMPETING TITLES IN THIS NICHE:
+COMPETING TITLES:
 {comp_lines}
 
-ANALYZE:
-1. If a viewer sees all these titles at once, which do they click FIRST and why?
-2. Does my title use stronger or weaker psychological triggers than competitors?
-3. What specific words, structures, or angles are working in competitor titles that mine lacks?
-4. What unique angle do competitors NOT cover that I could own?
-5. Is my title generic, derivative, or does it stand out?
-
-Be direct. If my title loses to competitors, say it loses and exactly why.
+Be direct. If my title is the weakest in the list, say it outright.
 
 Return valid JSON only:
 {{
-  "head_to_head_verdict": "<does my title win or lose against these competitors, and specifically why>",
-  "rank_in_feed": "<if all these titles appeared side by side, where would mine rank by click likelihood — be honest>",
-  "summary": "<2-sentence honest assessment of competitive position>",
+  "head_to_head_verdict": "<does my title win or lose? rank it — e.g. 'Your title ranks #4 of 5 — here is why'>",
+  "click_winner": "<which title in the list would get clicked FIRST by a cold viewer, and the exact psychological reason>",
+  "summary": "<2-sentence honest assessment of where my title stands competitively>",
   "insights": [
-    "<specific insight about what competitors do better psychologically>",
-    "<specific insight about keyword/SEO advantage competitors have>",
-    "<specific insight about angle or format that is working for competitors>"
+    "<specific insight: what psychological trigger competitors use that mine lacks>",
+    "<specific SEO/keyword advantage competitors have>",
+    "<specific format or angle that is outperforming mine>"
   ],
-  "title_edge": "<does my title have any genuine advantage? if none, say none>",
-  "what_competitors_do_better": ["<specific tactic competitor uses>", "<another>"],
+  "title_edge": "<any genuine advantage my title has — say 'none' if there is none>",
+  "what_competitors_do_better": ["<specific tactic>", "<another tactic>"],
   "gaps_to_exploit": [
-    "<specific angle no competitor covers that could dominate this niche>",
+    "<real uncovered angle in this niche>",
     "<another gap>"
   ],
-  "positioning_advice": "<exact strategy to reposition this content to beat the top competitor — include a specific rewritten title that would win>"
+  "positioning_advice": "<exact rewritten title that would rank #1 in this competitive set and why>"
 }}"""
 
     response = client.chat.completions.create(
@@ -455,7 +646,6 @@ Return valid JSON only:
             {"role": "system", "content": SYSTEM_BRUTAL},
             {"role": "user", "content": prompt},
         ],
-        max_tokens=1000,
-        temperature=0.2,
+        max_tokens=1000, temperature=0.15,
     )
     return _parse_json(response.choices[0].message.content)
