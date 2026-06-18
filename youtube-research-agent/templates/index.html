@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>YouTube Research Agent</title>
+<style>
+  :root {
+    --bg: #0f0f0f; --card: #1a1a1a; --border: #2a2a2a;
+    --accent: #ff0000; --accent2: #ff6b35; --text: #e8e8e8;
+    --muted: #888; --green: #00c853; --blue: #2979ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
+
+  header { background: linear-gradient(135deg,#1a0000 0%,#0f0f0f 100%); border-bottom: 1px solid var(--border); padding: 16px 32px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 1.4rem; font-weight: 700; }
+  header h1 span { color: var(--accent); }
+  .badge { background: var(--accent); color: #fff; font-size: 0.65rem; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+
+  .layout { display: grid; grid-template-columns: 240px 1fr; min-height: calc(100vh - 57px); }
+
+  nav { background: var(--card); border-right: 1px solid var(--border); padding: 24px 0; position: sticky; top: 0; height: calc(100vh - 57px); overflow-y: auto; }
+  nav .nav-section { padding: 0 16px 8px; font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-top: 16px; }
+  nav button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 20px; background: none; border: none; color: var(--text); font-size: 0.9rem; cursor: pointer; text-align: left; transition: background 0.15s; }
+  nav button:hover { background: rgba(255,255,255,0.05); }
+  nav button.active { background: rgba(255,0,0,0.1); color: var(--accent); border-right: 2px solid var(--accent); }
+  nav button .icon { font-size: 1.1rem; width: 20px; text-align: center; }
+
+  main { padding: 32px; overflow-y: auto; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  h2 { font-size: 1.4rem; margin-bottom: 4px; }
+  .subtitle { color: var(--muted); font-size: 0.875rem; margin-bottom: 24px; }
+
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .card-title { font-size: 0.75rem; text-transform: uppercase; color: var(--muted); letter-spacing: 0.5px; margin-bottom: 10px; }
+
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .form-group { display: flex; flex-direction: column; gap: 6px; }
+  .form-group.full { grid-column: 1 / -1; }
+  label { font-size: 0.8rem; color: var(--muted); }
+  input, select, textarea { background: #111; border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 10px 14px; font-size: 0.9rem; outline: none; transition: border-color 0.15s; }
+  input:focus, select:focus { border-color: var(--accent); }
+
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; border-radius: 8px; border: none; font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: opacity 0.15s, transform 0.1s; }
+  .btn:hover { opacity: 0.9; transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  /* Channel chips */
+  .my-channels-bar { background: rgba(255,0,0,0.05); border: 1px solid rgba(255,0,0,0.15); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+  .my-channels-bar .bar-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent); margin-bottom: 10px; font-weight: 600; }
+  .chips-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .ch-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+    border-radius: 999px; padding: 6px 14px; font-size: 0.82rem;
+    cursor: pointer; transition: all 0.15s; user-select: none;
+  }
+  .ch-chip:hover { background: rgba(255,0,0,0.15); border-color: var(--accent); color: #ff9090; }
+  .ch-chip.on { background: rgba(255,0,0,0.25); border-color: var(--accent); color: #ff6b6b; font-weight: 600; }
+  .ch-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); transition: background 0.15s; }
+  .ch-chip.on .dot { background: var(--accent); }
+  .no-channels-hint { font-size: 0.8rem; color: var(--muted); }
+  .no-channels-hint a { color: var(--accent); cursor: pointer; }
+
+  .results { margin-top: 24px; }
+  .video-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+  .video-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; transition: border-color 0.15s; }
+  .video-card:hover { border-color: var(--accent); }
+  .video-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; }
+  .video-card .info { padding: 12px; }
+  .video-card .title { font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; line-height: 1.4; }
+  .video-card .channel-name { font-size: 0.75rem; color: var(--muted); margin-bottom: 8px; }
+  .video-card .stats { display: flex; gap: 10px; font-size: 0.73rem; color: var(--muted); }
+
+  .keyword-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .keyword-pill { background: rgba(255,0,0,0.1); border: 1px solid rgba(255,0,0,0.2); color: #ff6b6b; padding: 4px 12px; border-radius: 999px; font-size: 0.78rem; }
+
+  .ai-output { background: #111; border: 1px solid var(--border); border-radius: 10px; padding: 20px; font-size: 0.875rem; line-height: 1.7; white-space: pre-wrap; max-height: 600px; overflow-y: auto; }
+
+  .stat-bar { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+  .stat-item { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 20px; flex: 1; min-width: 130px; }
+  .stat-item .val { font-size: 1.5rem; font-weight: 700; color: var(--accent); }
+  .stat-item .lbl { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .alert { padding: 12px 16px; border-radius: 8px; margin-top: 12px; font-size: 0.875rem; }
+  .alert-error { background: rgba(255,0,0,0.1); border: 1px solid rgba(255,0,0,0.3); color: #ff6b6b; }
+
+  .video-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .video-row:last-child { border-bottom: none; }
+  .video-row .num { color: var(--muted); font-size: 0.8rem; width: 22px; }
+  .video-row .vtitle { flex: 1; font-size: 0.85rem; }
+  .video-row .vviews { color: var(--muted); font-size: 0.78rem; white-space: nowrap; }
+
+  .trending-item { display: flex; align-items: center; gap: 12px; padding: 9px 14px; background: #111; border-radius: 8px; font-size: 0.875rem; margin-bottom: 6px; }
+  .trending-item .rank { color: var(--muted); font-size: 0.78rem; width: 24px; }
+
+  .channel-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #111; border-radius: 8px; margin-bottom: 8px; }
+  .channel-item .ch-name { flex: 1; font-size: 0.875rem; }
+  .ch-del { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 1rem; padding: 0 4px; }
+  .ch-del:hover { color: var(--accent); }
+  .channel-input-row { display: flex; gap: 8px; margin-bottom: 10px; }
+  .channel-input-row input { flex: 1; }
+</style>
+</head>
+<body>
+
+<header>
+  <span style="font-size:1.5rem">▶</span>
+  <h1>YouTube <span>Research</span> Agent</h1>
+  <span class="badge">AI POWERED</span>
+</header>
+
+<div class="layout">
+  <nav>
+    <div class="nav-section">My Channels</div>
+    <button onclick="showPanel('mychannels',this)"><span class="icon">📺</span> My Channels</button>
+
+    <div class="nav-section">Research</div>
+    <button class="active" onclick="showPanel('trending',this)"><span class="icon">🔥</span> Trending Videos</button>
+    <button onclick="showPanel('keyword',this)"><span class="icon">🔍</span> Keyword Search</button>
+    <button onclick="showPanel('trends',this)"><span class="icon">📈</span> Google Trends</button>
+
+    <div class="nav-section">Analysis</div>
+    <button onclick="showPanel('competitor',this)"><span class="icon">🕵️</span> Competitor Analysis</button>
+    <button onclick="showPanel('gaps',this)"><span class="icon">🎯</span> Content Gaps</button>
+
+    <div class="nav-section">Generate</div>
+    <button onclick="showPanel('ideas',this)"><span class="icon">💡</span> Content Ideas</button>
+  </nav>
+
+  <main>
+
+    <!-- MY CHANNELS SETUP -->
+    <div id="mychannels" class="panel">
+      <h2>📺 My Channels</h2>
+      <p class="subtitle">Save up to 5 channels — they appear as selectable chips on every panel</p>
+      <div class="card">
+        <div class="card-title">Add Channel</div>
+        <div class="channel-input-row">
+          <input type="text" id="ch-input" placeholder="Channel name exactly as on YouTube" onkeydown="if(event.key==='Enter')addChannel()"/>
+          <button class="btn btn-primary" onclick="addChannel()">+ Add</button>
+        </div>
+        <p style="font-size:0.78rem;color:var(--muted)">Max 5 channels. Type the name exactly as it appears on YouTube.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">Your Channels</div>
+        <div id="ch-list"></div>
+        <p id="ch-empty" style="color:var(--muted);font-size:0.875rem">No channels added yet.</p>
+      </div>
+      <div class="card" style="border-color:rgba(255,107,53,0.25)">
+        <div class="card-title">How It Works</div>
+        <ul style="font-size:0.875rem;color:var(--muted);line-height:2.2;padding-left:16px">
+          <li><strong style="color:var(--text)">Trending Videos</strong> — select a channel to see its top videos instead of global trending</li>
+          <li><strong style="color:var(--text)">Keyword Search</strong> — select a channel to search within that channel only</li>
+          <li><strong style="color:var(--text)">Google Trends</strong> — select a channel to auto-fill its name as the keyword</li>
+          <li><strong style="color:var(--text)">Competitor Analysis</strong> — one click selects the channel and runs analysis</li>
+          <li><strong style="color:var(--text)">Content Gaps / Ideas</strong> — multi-select channels as competitors</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- TRENDING -->
+    <div id="trending" class="panel active">
+      <h2>🔥 Trending Videos</h2>
+      <p class="subtitle">Global trending — or select a channel below to see that channel's top videos</p>
+      <div id="trending-chbar" class="my-channels-bar" style="display:none">
+        <div class="bar-label">📺 My Channels — select one (or none for global trending)</div>
+        <div class="chips-row" id="trending-chips"></div>
+      </div>
+      <div class="card">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Region (global trending only)</label>
+            <select id="trending-region">
+              <option value="US">United States</option>
+              <option value="GB">United Kingdom</option>
+              <option value="IN">India</option>
+              <option value="CA">Canada</option>
+              <option value="AU">Australia</option>
+              <option value="PK">Pakistan</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Max Results</label>
+            <input type="number" id="trending-max" value="20" min="5" max="50"/>
+          </div>
+        </div>
+        <br/>
+        <button class="btn btn-primary" onclick="fetchTrending()">▶ Fetch</button>
+        <span id="trending-mode-label" style="margin-left:12px;font-size:0.82rem;color:var(--muted)">Mode: Global Trending</span>
+      </div>
+      <div id="trending-results" class="results"></div>
+    </div>
+
+    <!-- KEYWORD SEARCH -->
+    <div id="keyword" class="panel">
+      <h2>🔍 Keyword Search</h2>
+      <p class="subtitle">Search YouTube for any keyword — or select a channel to search within it</p>
+      <div id="keyword-chbar" class="my-channels-bar" style="display:none">
+        <div class="bar-label">📺 My Channels — select one to filter search to that channel</div>
+        <div class="chips-row" id="keyword-chips"></div>
+      </div>
+      <div class="card">
+        <div class="form-group">
+          <label>Keyword or Topic</label>
+          <input type="text" id="kw-query" placeholder="e.g. AI tools for productivity"/>
+        </div>
+        <br/>
+        <button class="btn btn-primary" onclick="searchKeyword()">🔍 Search Videos</button>
+        <span id="keyword-mode-label" style="margin-left:12px;font-size:0.82rem;color:var(--muted)"></span>
+      </div>
+      <div id="keyword-results" class="results"></div>
+    </div>
+
+    <!-- GOOGLE TRENDS -->
+    <div id="trends" class="panel">
+      <h2>📈 Google Trends</h2>
+      <p class="subtitle">Discover trending searches and related queries</p>
+      <div id="trends-chbar" class="my-channels-bar" style="display:none">
+        <div class="bar-label">📺 My Channels — select one to auto-fill as keyword</div>
+        <div class="chips-row" id="trends-chips"></div>
+      </div>
+      <div class="card">
+        <div class="form-group">
+          <label>Keyword</label>
+          <input type="text" id="trends-query" placeholder="e.g. ChatGPT"/>
+        </div>
+        <br/>
+        <button class="btn btn-primary" onclick="fetchTrends()">📈 Get Trends</button>
+      </div>
+      <div id="trends-results" class="results"></div>
+    </div>
+
+    <!-- COMPETITOR ANALYSIS -->
+    <div id="competitor" class="panel">
+      <h2>🕵️ Competitor Analysis</h2>
+      <p class="subtitle">Analyze a channel's top videos — select from My Channels or type any name</p>
+      <div id="comp-chbar" class="my-channels-bar" style="display:none">
+        <div class="bar-label">📺 My Channels — click to select &amp; analyze instantly</div>
+        <div class="chips-row" id="comp-chips"></div>
+      </div>
+      <div class="card">
+        <div class="form-group">
+          <label>Channel Name</label>
+          <input type="text" id="comp-channel" placeholder="e.g. MrBeast"/>
+        </div>
+        <br/>
+        <button class="btn btn-primary" onclick="analyzeCompetitor()">🔎 Analyze Channel</button>
+      </div>
+      <div id="competitor-results" class="results"></div>
+    </div>
+
+    <!-- CONTENT GAPS -->
+    <div id="gaps" class="panel">
+      <h2>🎯 Content Gaps</h2>
+      <p class="subtitle">Find topics trending but under-covered — select channels as competitors</p>
+      <div id="gaps-chbar" class="my-channels-bar" style="display:none">
+        <div class="bar-label">📺 My Channels — multi-select as competitors</div>
+        <div class="chips-row" id="gaps-chips"></div>
+      </div>
+      <div class="card">
+        <div class="form-group">
+          <label>Your Niche</label>
+          <input type="text" id="gap-niche" placeholder="e.g. Personal Finance for Millennials"/>
+        </div>
+        <div class="form-group" style="margin-top:12px">
+          <label>Competitors (auto-filled from chips above, or type manually)</label>
+          <input type="text" id="gap-competitors" placeholder="e.g. Graham Stephan, Andrei Jikh"/>
+        </div>
+        <br/>
+        <button class="btn btn-primary" onclick="analyzeGaps()">🎯 Find Gaps</button>
+      </div>
+      <div id="gaps-results" class="results"></div>
+    </div>
+
+    <!-- CONTENT IDEAS -->
+    <div id="ideas" class="panel">
+      <h2>💡 Content Ideas</h2>
+      <p class="subtitle">Full research run — select channels as competitors for tailored ideas</p>
+      <div id="ideas-chbar" class="my-channels-bar" style="display:none">
+        <div class="bar-label">📺 My Channels — multi-select as competitors</div>
+        <div class="chips-row" id="ideas-chips"></div>
+      </div>
+      <div class="card">
+        <div class="form-grid">
+          <div class="form-group full">
+            <label>Your Niche</label>
+            <input type="text" id="ideas-niche" placeholder="e.g. AI tools for content creators"/>
+          </div>
+          <div class="form-group full">
+            <label>Competitors (auto-filled from chips above, or type manually)</label>
+            <input type="text" id="ideas-competitors" placeholder="e.g. Ali Abdaal, Thomas Frank"/>
+          </div>
+          <div class="form-group">
+            <label>Region</label>
+            <select id="ideas-region">
+              <option value="US">United States</option>
+              <option value="GB">United Kingdom</option>
+              <option value="IN">India</option>
+              <option value="CA">Canada</option>
+              <option value="PK">Pakistan</option>
+            </select>
+          </div>
+        </div>
+        <br/>
+        <button class="btn btn-primary" onclick="generateIdeas()" id="ideas-btn">✨ Generate Ideas</button>
+        <span style="color:var(--muted);font-size:0.8rem;margin-left:12px">~30 seconds</span>
+      </div>
+      <div id="ideas-results" class="results"></div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+// ── Storage ──────────────────────────────────────────────────────────────────
+function getChannels() { return JSON.parse(localStorage.getItem('myChannels') || '[]'); }
+function saveChannels(a) { localStorage.setItem('myChannels', JSON.stringify(a)); }
+
+// Per-panel single-select state (trending, keyword, trends, competitor)
+const singleSel = { trending: null, keyword: null, trends: null, comp: null };
+// Per-panel multi-select state (gaps, ideas)
+const multiSel  = { gaps: [], ideas: [] };
+
+// ── My Channels management ───────────────────────────────────────────────────
+function addChannel() {
+  const inp = document.getElementById('ch-input');
+  const name = inp.value.trim();
+  if (!name) return;
+  const ch = getChannels();
+  if (ch.length >= 5) return alert('Max 5 channels. Remove one first.');
+  if (ch.includes(name)) return alert('Already added.');
+  ch.push(name); saveChannels(ch); inp.value = '';
+  renderChannelList(); renderAllBars();
+}
+function removeChannel(name) {
+  saveChannels(getChannels().filter(c => c !== name));
+  // clear from sel states
+  Object.keys(singleSel).forEach(k => { if (singleSel[k] === name) singleSel[k] = null; });
+  Object.keys(multiSel).forEach(k => { multiSel[k] = multiSel[k].filter(c => c !== name); });
+  renderChannelList(); renderAllBars();
+}
+function renderChannelList() {
+  const ch = getChannels();
+  document.getElementById('ch-empty').style.display = ch.length ? 'none' : 'block';
+  document.getElementById('ch-list').innerHTML = ch.map(c => `
+    <div class="channel-item">
+      <span>📺</span><span class="ch-name">${c}</span>
+      <button class="ch-del" onclick="removeChannel('${c}')">✕</button>
+    </div>`).join('');
+}
+
+// ── Chip rendering ───────────────────────────────────────────────────────────
+function renderBar(barId, chipsId, channels, mode, selKey) {
+  const bar = document.getElementById(barId);
+  const row = document.getElementById(chipsId);
+  bar.style.display = channels.length ? 'block' : 'none';
+  if (!channels.length) return;
+  if (mode === 'single') {
+    row.innerHTML = channels.map(c => `
+      <span class="ch-chip ${singleSel[selKey]===c?'on':''}" onclick="singleClick('${selKey}','${c}','${chipsId}','${barId}')">
+        <span class="dot"></span>${c}
+      </span>`).join('');
+  } else {
+    row.innerHTML = channels.map(c => `
+      <span class="ch-chip ${multiSel[selKey].includes(c)?'on':''}" onclick="multiClick('${selKey}','${c}','${chipsId}')">
+        <span class="dot"></span>${c}
+      </span>`).join('');
+  }
+}
+
+function renderAllBars() {
+  const ch = getChannels();
+  renderBar('trending-chbar','trending-chips', ch, 'single', 'trending');
+  renderBar('keyword-chbar', 'keyword-chips',  ch, 'single', 'keyword');
+  renderBar('trends-chbar',  'trends-chips',   ch, 'single', 'trends');
+  renderBar('comp-chbar',    'comp-chips',     ch, 'single', 'comp');
+  renderBar('gaps-chbar',    'gaps-chips',     ch, 'multi',  'gaps');
+  renderBar('ideas-chbar',   'ideas-chips',    ch, 'multi',  'ideas');
+}
+
+function singleClick(key, name, chipsId, barId) {
+  singleSel[key] = singleSel[key] === name ? null : name; // toggle off if same
+  renderBar(barId, chipsId, getChannels(), 'single', key);
+  // Side effects per panel
+  if (key === 'trending') {
+    const lbl = document.getElementById('trending-mode-label');
+    lbl.textContent = singleSel.trending ? `Mode: ${singleSel.trending}'s videos` : 'Mode: Global Trending';
+  }
+  if (key === 'keyword' && singleSel.keyword) {
+    document.getElementById('keyword-mode-label').textContent = `Filtering to: ${singleSel.keyword}`;
+  } else if (key === 'keyword') {
+    document.getElementById('keyword-mode-label').textContent = '';
+  }
+  if (key === 'trends' && singleSel.trends) {
+    document.getElementById('trends-query').value = singleSel.trends;
+  }
+  if (key === 'comp' && singleSel.comp) {
+    document.getElementById('comp-channel').value = singleSel.comp;
+  }
+}
+
+function multiClick(key, name, chipsId) {
+  const arr = multiSel[key];
+  const idx = arr.indexOf(name);
+  if (idx === -1) arr.push(name); else arr.splice(idx, 1);
+  const barId = key === 'gaps' ? 'gaps-chbar' : 'ideas-chbar';
+  renderBar(barId, chipsId, getChannels(), 'multi', key);
+  // Sync to text input
+  const inputId = key === 'gaps' ? 'gap-competitors' : 'ideas-competitors';
+  document.getElementById(inputId).value = arr.join(', ');
+}
+
+// ── Nav ───────────────────────────────────────────────────────────────────────
+function showPanel(id, btn) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  btn.classList.add('active');
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function fmtNum(n) {
+  if (n >= 1e6) return (n/1e6).toFixed(1)+'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1)+'K';
+  return String(n);
+}
+function renderVideos(videos) {
+  if (!videos || !videos.length) return '<p style="color:var(--muted)">No videos found.</p>';
+  return `<div class="video-grid">${videos.map(v=>`
+    <a href="${v.url}" target="_blank" style="text-decoration:none;color:inherit">
+      <div class="video-card">
+        <img src="${v.thumbnail||''}" alt="" onerror="this.style.display='none'"/>
+        <div class="info">
+          <div class="title">${v.title}</div>
+          <div class="channel-name">${v.channel}</div>
+          <div class="stats">
+            <span>👁 ${fmtNum(v.view_count)}</span>
+            <span>👍 ${fmtNum(v.like_count)}</span>
+            <span>💬 ${fmtNum(v.comment_count)}</span>
+          </div>
+        </div>
+      </div>
+    </a>`).join('')}</div>`;
+}
+function renderKeywords(kw) {
+  if (!kw || !kw.length) return '';
+  return `<div class="card" style="margin-top:16px">
+    <div class="card-title">📌 Popular Keywords from These Videos</div>
+    <div class="keyword-list">${kw.slice(0,30).map(k=>`<span class="keyword-pill">${k}</span>`).join('')}</div>
+  </div>`;
+}
+async function apiFetch(url, body, el, renderFn) {
+  el.innerHTML = '<div style="padding:30px;text-align:center"><div class="spinner"></div></div>';
+  try {
+    const res = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Server error');
+    renderFn(data);
+  } catch(e) {
+    el.innerHTML = `<div class="alert alert-error">❌ ${e.message}</div>`;
+  }
+}
+
+// ── Trending ──────────────────────────────────────────────────────────────────
+async function fetchTrending() {
+  const el = document.getElementById('trending-results');
+  const selectedCh = singleSel.trending;
+  if (selectedCh) {
+    // Fetch trending videos in the same niche/category as the selected channel
+    const max = parseInt(document.getElementById('trending-max').value)||20;
+    await apiFetch('/api/trending-for-channel', {channel_name: selectedCh, max_results: max}, el, data => {
+      el.innerHTML = `<div class="stat-bar">
+        <div class="stat-item"><div class="val">${data.videos.length}</div><div class="lbl">Trending Videos</div></div>
+        <div class="stat-item"><div class="val">${data.keywords.length}</div><div class="lbl">Keywords Found</div></div>
+        <div class="stat-item"><div class="val">${fmtNum(Math.max(...data.videos.map(v=>v.view_count)))}</div><div class="lbl">Peak Views</div></div>
+      </div>
+      <div class="card" style="border-color:rgba(255,107,53,0.3);margin-bottom:16px">
+        <div class="card-title">🎯 Niche Detection — ${data.channel}</div>
+        ${data.topic_labels && data.topic_labels.length ? `<p style="font-size:0.82rem;margin-bottom:6px"><span style="color:var(--muted)">YouTube Topics:</span> <strong>${data.topic_labels.join(', ')}</strong></p>` : ''}
+        ${data.channel_keywords && data.channel_keywords.length ? `<p style="font-size:0.82rem;margin-bottom:6px"><span style="color:var(--muted)">Channel Keywords:</span> <strong>${data.channel_keywords.slice(0,6).join(', ')}</strong></p>` : ''}
+        ${data.description_used ? `<p style="font-size:0.78rem;color:var(--muted);margin-bottom:8px;font-style:italic">"${data.description_used}${data.description_used.length >= 150 ? '…' : ''}"</p>` : ''}
+        <p style="font-size:0.82rem;color:var(--accent2)">🔍 Searching YouTube for: <strong>"${data.niche_query}"</strong></p>
+      </div>
+      ${renderVideos(data.videos)}
+      ${renderKeywords(data.keywords)}`;
+    });
+  } else {
+    const region = document.getElementById('trending-region').value;
+    const max = parseInt(document.getElementById('trending-max').value)||20;
+    await apiFetch('/api/trending', {region, max_results:max}, el, data => {
+      el.innerHTML = `<div class="stat-bar">
+        <div class="stat-item"><div class="val">${data.videos.length}</div><div class="lbl">Trending Videos</div></div>
+        <div class="stat-item"><div class="val">${data.keywords.length}</div><div class="lbl">Keywords Extracted</div></div>
+        <div class="stat-item"><div class="val">${fmtNum(Math.max(...data.videos.map(v=>v.view_count)))}</div><div class="lbl">Peak Views</div></div>
+      </div>
+      ${renderVideos(data.videos)}
+      ${renderKeywords(data.keywords)}`;
+    });
+  }
+}
+
+// ── Keyword Search ────────────────────────────────────────────────────────────
+async function searchKeyword() {
+  const el = document.getElementById('keyword-results');
+  const keyword = document.getElementById('kw-query').value.trim();
+  if (!keyword) return el.innerHTML = '<div class="alert alert-error">Please enter a keyword.</div>';
+  const selectedCh = singleSel.keyword;
+  let body = {keyword, max_results: 20};
+  if (selectedCh) body.channel_filter = selectedCh; // backend handles this
+  await apiFetch('/api/search', body, el, data => {
+    el.innerHTML = `<div class="stat-bar">
+      <div class="stat-item"><div class="val">${data.videos.length}</div><div class="lbl">Videos Found</div></div>
+      <div class="stat-item"><div class="val">${data.keywords.length}</div><div class="lbl">Keywords Found</div></div>
+    </div>
+    ${renderVideos(data.videos)}
+    ${renderKeywords(data.keywords)}`;
+  });
+}
+
+// ── Google Trends ─────────────────────────────────────────────────────────────
+async function fetchTrends() {
+  const el = document.getElementById('trends-results');
+  const keyword = document.getElementById('trends-query').value.trim();
+  if (!keyword) return el.innerHTML = '<div class="alert alert-error">Please enter a keyword.</div>';
+  await apiFetch('/api/trends', {keyword, max_results:20}, el, data => {
+    const rq = data.related_queries;
+    el.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="card">
+        <div class="card-title">📈 Rising Queries for "${keyword}"</div>
+        <div class="keyword-list">${(rq.rising||[]).map(k=>`<span class="keyword-pill">↑ ${k}</span>`).join('')||'<span style="color:var(--muted)">None found</span>'}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">🔝 Top Related Queries</div>
+        <div class="keyword-list">${(rq.top||[]).map(k=>`<span class="keyword-pill">${k}</span>`).join('')||'<span style="color:var(--muted)">None found</span>'}</div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-title">🔥 Today's Trending Searches (US)</div>
+      ${data.trending_searches.slice(0,15).map((t,i)=>`
+        <div class="trending-item"><span class="rank">#${i+1}</span><span>${t}</span></div>`).join('')}
+    </div>`;
+  });
+}
+
+// ── Competitor ────────────────────────────────────────────────────────────────
+async function analyzeCompetitor() {
+  const el = document.getElementById('competitor-results');
+  const channel_name = document.getElementById('comp-channel').value.trim();
+  if (!channel_name) return el.innerHTML = '<div class="alert alert-error">Please enter a channel name.</div>';
+  await apiFetch('/api/competitor', {channel_name}, el, data => {
+    el.innerHTML = `<div class="card">
+      <div class="card-title">📺 ${data.channel} — Top Videos</div>
+      ${(data.top_videos||[]).slice(0,10).map((v,i)=>`
+        <div class="video-row">
+          <span class="num">#${i+1}</span>
+          <span class="vtitle"><a href="${v.url}" target="_blank" style="color:inherit">${v.title}</a></span>
+          <span class="vviews">👁 ${fmtNum(v.view_count)}</span>
+        </div>`).join('')}
+    </div>
+    ${data.common_tags && data.common_tags.length ? `<div class="card">
+      <div class="card-title">📌 Common Tags</div>
+      <div class="keyword-list">${data.common_tags.map(t=>`<span class="keyword-pill">${t}</span>`).join('')}</div>
+    </div>` : ''}
+    <div class="card">
+      <div class="card-title">🤖 AI Analysis</div>
+      <div class="ai-output">${data.ai_analysis}</div>
+    </div>`;
+  });
+}
+
+// ── Content Gaps ──────────────────────────────────────────────────────────────
+async function analyzeGaps() {
+  const el = document.getElementById('gaps-results');
+  const niche = document.getElementById('gap-niche').value.trim();
+  if (!niche) return el.innerHTML = '<div class="alert alert-error">Please enter your niche.</div>';
+  const compStr = document.getElementById('gap-competitors').value.trim();
+  const competitors = compStr ? compStr.split(',').map(s=>s.trim()).filter(Boolean) : [];
+  await apiFetch('/api/gap-analysis', {niche, competitors}, el, data => {
+    el.innerHTML = `<div class="card">
+      <div class="card-title">🎯 Content Gaps — ${data.niche}</div>
+      <div class="ai-output">${data.gaps}</div>
+    </div>`;
+  });
+}
+
+// ── Content Ideas ─────────────────────────────────────────────────────────────
+async function generateIdeas() {
+  const el = document.getElementById('ideas-results');
+  const btn = document.getElementById('ideas-btn');
+  const niche = document.getElementById('ideas-niche').value.trim();
+  if (!niche) return el.innerHTML = '<div class="alert alert-error">Please enter your niche.</div>';
+  const compStr = document.getElementById('ideas-competitors').value.trim();
+  const competitors = compStr ? compStr.split(',').map(s=>s.trim()).filter(Boolean) : [];
+  const region = document.getElementById('ideas-region').value;
+  btn.disabled = true; btn.innerHTML = '<div class="spinner"></div> Researching...';
+  await apiFetch('/api/content-ideas', {niche, competitors, region}, el, data => {
+    el.innerHTML = `<div class="stat-bar">
+      <div class="stat-item"><div class="val">${data.keywords_analyzed.length}</div><div class="lbl">Keywords Analyzed</div></div>
+      <div class="stat-item"><div class="val">${data.trending_searches.length}</div><div class="lbl">Trending Searches</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">🔥 Trending Searches Used</div>
+      <div class="keyword-list">${data.trending_searches.map(t=>`<span class="keyword-pill">${t}</span>`).join('')}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">📌 Keywords Analyzed</div>
+      <div class="keyword-list">${data.keywords_analyzed.map(k=>`<span class="keyword-pill">${k}</span>`).join('')}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">💡 Content Ideas</div>
+      <div class="ai-output">${data.ideas}</div>
+    </div>`;
+  });
+  btn.disabled = false; btn.innerHTML = '✨ Generate Ideas';
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+renderChannelList();
+renderAllBars();
+</script>
+</body>
+</html>

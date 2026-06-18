@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Content Optimizer Agent</title>
+<style>
+:root{
+  --bg:#0b0d14;--surface:#13161f;--surface2:#1a1e2e;--surface3:#222840;
+  --border:#2a2f4a;--accent:#7c6bff;--accent2:#00e5b0;--accent3:#ff6b9d;
+  --text:#e8eaf6;--muted:#7b80a8;
+  --seo:#4fc3f7;--sxo:#ff9f43;--aeo:#a29bfe;--geo:#00e5b0;
+  --red:#ff6b6b;--yellow:#ffd93d;--green:#6bcb77;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh;}
+
+/* HEADER */
+header{background:linear-gradient(135deg,#13161f,#0d1020);border-bottom:1px solid var(--border);padding:16px 28px;display:flex;align-items:center;gap:14px;}
+header .logo{font-size:28px;}
+header h1{font-size:18px;font-weight:700;}
+header .sub{font-size:12px;color:var(--muted);margin-left:8px;}
+
+.main{max-width:1200px;margin:0 auto;padding:28px 18px;}
+
+/* MODE SELECTOR */
+.mode-bar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px;}
+.mode-btn{
+  background:var(--surface2);border:2px solid var(--border);border-radius:30px;
+  padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
+  transition:all .2s;color:var(--muted);
+}
+.mode-btn.active-SEO{border-color:var(--seo);color:var(--seo);background:rgba(79,195,247,.08);}
+.mode-btn.active-SXO{border-color:var(--sxo);color:var(--sxo);background:rgba(255,159,67,.08);}
+.mode-btn.active-AEO{border-color:var(--aeo);color:var(--aeo);background:rgba(162,155,254,.08);}
+.mode-btn.active-GEO{border-color:var(--geo);color:var(--geo);background:rgba(0,229,176,.08);}
+.mode-btn .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;}
+.dot-SEO{background:var(--seo);}
+.dot-SXO{background:var(--sxo);}
+.dot-AEO{background:var(--aeo);}
+.dot-GEO{background:var(--geo);}
+
+/* INPUT CARD */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px;margin-bottom:20px;}
+.card-title{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:16px;}
+.row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;}
+.field{flex:1;min-width:200px;display:flex;flex-direction:column;gap:5px;}
+.field label{font-size:12px;color:var(--muted);}
+.field input,.field select,.field textarea{
+  background:var(--surface2);border:1px solid var(--border);border-radius:8px;
+  color:var(--text);font-size:13px;padding:9px 12px;outline:none;
+  transition:border-color .2s;font-family:inherit;
+}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent);}
+.field textarea{min-height:100px;resize:vertical;}
+.char-hint{font-size:11px;color:var(--muted);text-align:right;}
+
+/* BUTTONS */
+.btn-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+.btn{border:none;border-radius:9px;cursor:pointer;font-weight:600;font-size:14px;padding:11px 28px;transition:opacity .2s,transform .1s;}
+.btn:active{transform:scale(.98);}
+.btn:disabled{opacity:.5;cursor:not-allowed;}
+.btn-primary{background:linear-gradient(135deg,var(--accent),#9b59b6);color:#fff;}
+.btn-clear{background:var(--surface2);border:1px solid var(--border);color:var(--muted);}
+.btn-copy{background:var(--surface2);border:1px solid var(--border);color:var(--muted);font-size:12px;padding:6px 14px;border-radius:6px;}
+.btn-copy:hover{border-color:var(--accent2);color:var(--accent2);}
+
+/* SPINNER */
+.spinner{display:none;align-items:center;gap:10px;color:var(--muted);font-size:13px;}
+.spinner.show{display:flex;}
+.spin{width:20px;height:20px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* ERROR */
+.error{background:#1e1010;border:1px solid var(--red);border-radius:10px;padding:12px 16px;color:var(--red);font-size:13px;margin-bottom:16px;display:none;}
+.error.show{display:block;}
+
+/* RESULTS */
+#results{display:none;}
+#results.show{display:block;}
+
+/* SCORE DASHBOARD */
+.score-dashboard{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px;margin-bottom:22px;}
+.score-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center;}
+.score-card .sc-label{font-size:11px;text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;}
+.score-ring{position:relative;width:72px;height:72px;margin:0 auto 6px;}
+.score-ring svg{transform:rotate(-90deg);}
+.score-ring .sv{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:20px;font-weight:700;}
+.score-card.overall-card{border-width:2px;}
+.grade-badge{font-size:28px;font-weight:800;margin-top:4px;}
+
+/* WINS/ISSUES */
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px;}
+@media(max-width:700px){.two-col{grid-template-columns:1fr;}}
+.wi-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;}
+.wi-card h4{font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);margin-bottom:12px;}
+.wi-list{list-style:none;display:flex;flex-direction:column;gap:6px;}
+.wi-list li{font-size:13px;padding:6px 10px;border-radius:6px;line-height:1.4;}
+.win{background:rgba(107,203,119,.08);border-left:3px solid var(--green);color:#c8f0ca;}
+.issue{background:rgba(255,107,107,.08);border-left:3px solid var(--red);color:#ffc8c8;}
+
+/* TABS */
+.tab-bar{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:16px;flex-wrap:wrap;}
+.tab{background:none;border:none;color:var(--muted);font-size:13px;font-weight:600;padding:9px 16px;cursor:pointer;border-bottom:2px solid transparent;transition:all .2s;}
+.tab.active{color:var(--text);border-bottom-color:var(--accent);}
+.tab-pane{display:none;}
+.tab-pane.active{display:block;}
+
+/* OPTIMIZED SECTION */
+.opt-block{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px;}
+.opt-block .ob-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
+.opt-block h3{font-size:13px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);}
+.opt-content{font-size:14px;line-height:1.7;color:var(--text);white-space:pre-wrap;}
+.char-count{font-size:11px;color:var(--muted);}
+.tag-cloud{display:flex;flex-wrap:wrap;gap:8px;}
+.tag-pill{background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:4px 12px;font-size:12px;}
+.hashtag-pill{background:rgba(124,107,255,.12);border:1px solid rgba(124,107,255,.3);color:var(--accent);border-radius:20px;padding:4px 12px;font-size:12px;}
+
+/* CAPTION TABS */
+.platform-icon{font-size:16px;margin-right:5px;}
+.caption-box{background:var(--surface2);border-radius:10px;padding:16px;font-size:14px;line-height:1.7;white-space:pre-wrap;min-height:100px;}
+
+/* IMPROVEMENTS */
+.imp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;}
+.captions-all-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;margin-bottom:20px;}
+.cap-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;}
+.cap-card .cap-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
+.cap-card .cap-platform{font-size:13px;font-weight:700;display:flex;align-items:center;gap:6px;}
+.cap-card .caption-box{background:var(--surface2);border-radius:8px;padding:12px;font-size:13px;line-height:1.7;white-space:pre-wrap;min-height:80px;}
+.all-pane-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-top:14px;}
+.all-fw-card{background:var(--surface2);border-radius:10px;padding:14px;border-top:3px solid;}
+.all-fw-card h4{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;margin-bottom:10px;}
+.all-fw-wins{margin-bottom:8px;}
+.all-fw-wins .lbl,.all-fw-issues .lbl{font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px;}
+.all-fw-wins ul,.all-fw-issues ul{list-style:none;display:flex;flex-direction:column;gap:4px;}
+.all-fw-wins li{font-size:12px;color:#c8f0ca;padding-left:12px;position:relative;}
+.all-fw-wins li::before{content:"✓";position:absolute;left:0;color:var(--green);}
+.all-fw-issues li{font-size:12px;color:#ffc8c8;padding-left:12px;position:relative;}
+.all-fw-issues li::before{content:"✗";position:absolute;left:0;color:var(--red);}
+.imp-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;}
+.imp-card h4{font-size:12px;text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px;}
+.imp-card.critical h4{color:var(--red);}
+.imp-card.high h4{color:var(--yellow);}
+.imp-card.medium h4{color:var(--seo);}
+.imp-card.quick h4{color:var(--green);}
+.imp-list{list-style:none;display:flex;flex-direction:column;gap:5px;}
+.imp-list li{font-size:12px;color:var(--muted);padding-left:12px;position:relative;line-height:1.5;}
+.imp-list li::before{content:"→";position:absolute;left:0;color:inherit;}
+.imp-card.critical .imp-list li{color:#ffc8c8;}
+.imp-card.high .imp-list li{color:#ffe8a0;}
+.imp-card.medium .imp-list li{color:#c0e8ff;}
+.imp-card.quick .imp-list li{color:#c8f0ca;}
+
+.section-head{font-size:13px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin:22px 0 12px;display:flex;align-items:center;gap:8px;}
+.section-head .icon{font-size:16px;}
+
+/* Summary */
+.summary-bar{background:var(--surface2);border-left:3px solid var(--accent2);border-radius:8px;padding:12px 16px;font-size:14px;line-height:1.6;margin-bottom:20px;}
+</style>
+</head>
+<body>
+
+<header>
+  <span class="logo">⚡</span>
+  <h1>Content Optimizer Agent</h1>
+  <span class="sub">SEO · SXO · AEO · GEO — YouTube + Social Media</span>
+</header>
+
+<div class="main">
+
+  <!-- MODE SELECTOR -->
+  <div class="mode-bar" id="modeBar">
+    <div style="font-size:12px;color:var(--muted);display:flex;align-items:center;margin-right:4px;">Optimize for:</div>
+    <button class="mode-btn active-SEO" data-mode="SEO" onclick="toggleMode(this)"><span class="dot dot-SEO"></span>SEO</button>
+    <button class="mode-btn active-SXO" data-mode="SXO" onclick="toggleMode(this)"><span class="dot dot-SXO"></span>SXO</button>
+    <button class="mode-btn active-AEO" data-mode="AEO" onclick="toggleMode(this)"><span class="dot dot-AEO"></span>AEO</button>
+    <button class="mode-btn active-GEO" data-mode="GEO" onclick="toggleMode(this)"><span class="dot dot-GEO"></span>GEO</button>
+  </div>
+
+  <!-- INPUT -->
+  <div class="card">
+    <div class="card-title">YouTube Content</div>
+    <div class="row">
+      <div class="field" style="flex:3">
+        <label>Video Title *</label>
+        <input id="title" type="text" placeholder="e.g. How to Save Money in Pakistan – 5 Proven Tips (2025)" oninput="updateChar(this,'titleChar',70)"/>
+        <div class="char-hint" id="titleChar">0 / 70 chars</div>
+      </div>
+      <div class="field" style="flex:1;min-width:140px">
+        <label>Niche / Topic</label>
+        <input id="niche" type="text" placeholder="e.g. Personal Finance"/>
+      </div>
+      <div class="field" style="flex:0 0 140px">
+        <label>Language</label>
+        <select id="language">
+          <option value="English">English</option>
+          <option value="Urdu">Urdu</option>
+          <option value="Hindi">Hindi</option>
+          <option value="Arabic">Arabic</option>
+          <option value="Spanish">Spanish</option>
+        </select>
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Description (paste your current one, or leave blank)</label>
+        <textarea id="description" placeholder="Paste your current YouTube description here..."></textarea>
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Current Tags (comma separated)</label>
+        <input id="tags" type="text" placeholder="save money, budgeting tips, pakistan finance, personal finance"/>
+      </div>
+      <div class="field">
+        <label>Current Hashtags (space or comma separated)</label>
+        <input id="hashtags" type="text" placeholder="#SaveMoney #Finance #Pakistan"/>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="optimizeBtn" onclick="optimize()">⚡ Analyze & Optimize</button>
+      <button class="btn btn-clear" onclick="clearAll()">Clear</button>
+      <div class="spinner" id="spinner"><div class="spin"></div> Analyzing with AI frameworks...</div>
+    </div>
+  </div>
+
+  <div class="error" id="error"></div>
+
+  <!-- RESULTS -->
+  <div id="results">
+
+    <!-- SUMMARY -->
+    <div class="summary-bar" id="summaryBar"></div>
+
+    <!-- SCORES -->
+    <div class="section-head"><span class="icon">📊</span> Scores</div>
+    <div class="score-dashboard" id="scoreBoard"></div>
+
+    <!-- FRAMEWORK ANALYSIS -->
+    <div class="section-head"><span class="icon">🔍</span> Framework Analysis</div>
+    <div class="card" style="padding-bottom:0">
+      <div class="tab-bar" id="analysisTabs"></div>
+      <div id="analysisContent" style="padding-bottom:16px;"></div>
+    </div>
+
+    <!-- OPTIMIZED -->
+    <div class="section-head"><span class="icon">✅</span> Optimized Content</div>
+
+    <div class="opt-block">
+      <div class="ob-header">
+        <h3>📺 YouTube Title</h3>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span class="char-count" id="optTitleChar"></span>
+          <button class="btn-copy" onclick="copyText('optTitle')">Copy</button>
+        </div>
+      </div>
+      <div class="opt-content" id="optTitle"></div>
+    </div>
+
+    <div class="opt-block">
+      <div class="ob-header">
+        <h3>📝 YouTube Description</h3>
+        <button class="btn-copy" onclick="copyText('optDesc')">Copy</button>
+      </div>
+      <div class="opt-content" id="optDesc"></div>
+    </div>
+
+    <div class="opt-block">
+      <div class="ob-header">
+        <h3>🏷️ Tags</h3>
+        <button class="btn-copy" onclick="copyTagsText('optTags')">Copy as Text</button>
+      </div>
+      <div class="tag-cloud" id="optTags"></div>
+    </div>
+
+    <div class="opt-block">
+      <div class="ob-header">
+        <h3># Hashtags</h3>
+        <button class="btn-copy" onclick="copyTagsText('optHashtags')">Copy</button>
+      </div>
+      <div class="tag-cloud" id="optHashtags"></div>
+    </div>
+
+    <!-- CAPTIONS -->
+    <div class="section-head"><span class="icon">📱</span> Platform Captions</div>
+    <div id="captionsGrid" class="captions-all-grid"></div>
+
+    <!-- IMPROVEMENTS -->
+    <div class="section-head"><span class="icon">🎯</span> Improvement Roadmap</div>
+    <div class="imp-grid" id="impGrid"></div>
+
+  </div><!-- /results -->
+</div>
+
+<script>
+// ── Mode toggle ──────────────────────────────────────────────────────────────
+const activeModes = new Set(['SEO','SXO','AEO','GEO']);
+function toggleMode(btn){
+  const m = btn.dataset.mode;
+  if(activeModes.has(m)){
+    if(activeModes.size===1) return; // keep at least one
+    activeModes.delete(m);
+    btn.className='mode-btn';
+  } else {
+    activeModes.add(m);
+    btn.className=`mode-btn active-${m}`;
+  }
+}
+
+// ── Char counter ─────────────────────────────────────────────────────────────
+function updateChar(el,id,max){
+  const n=el.value.length;
+  const el2=document.getElementById(id);
+  el2.textContent=`${n} / ${max} chars`;
+  el2.style.color=n>max?'var(--red)':n>max*.85?'var(--yellow)':'var(--muted)';
+}
+
+// ── Score ring ───────────────────────────────────────────────────────────────
+const modeColors={SEO:'var(--seo)',SXO:'var(--sxo)',AEO:'var(--aeo)',GEO:'var(--geo)',overall:'var(--accent2)'};
+function ring(v,color){
+  const r=28,cx=36,cy=36,circ=2*Math.PI*r,dash=(v/100)*circ;
+  return `<svg width="72" height="72" viewBox="0 0 72 72">
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--border)" stroke-width="6"/>
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="6"
+      stroke-dasharray="${dash} ${circ}" stroke-linecap="round"/>
+  </svg>`;
+}
+function scoreColor(v){return v>=80?'var(--green)':v>=55?'var(--yellow)':'var(--red)';}
+
+// ── Optimize ─────────────────────────────────────────────────────────────────
+async function optimize(){
+  const title=document.getElementById('title').value.trim();
+  if(!title){alert('Please enter a video title.');return;}
+  const btn=document.getElementById('optimizeBtn');
+  btn.disabled=true;
+  document.getElementById('spinner').classList.add('show');
+  document.getElementById('results').classList.remove('show');
+  document.getElementById('error').classList.remove('show');
+
+  const rawTags=document.getElementById('tags').value.split(/[,\n]/).map(t=>t.trim()).filter(Boolean);
+  const rawHash=document.getElementById('hashtags').value.split(/[\s,]+/).map(h=>h.trim()).filter(Boolean);
+
+  try{
+    const res=await fetch('/api/optimize',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        title,
+        description:document.getElementById('description').value,
+        tags:rawTags,hashtags:rawHash,
+        modes:[...activeModes],
+        niche:document.getElementById('niche').value,
+        language:document.getElementById('language').value
+      })
+    });
+    if(!res.ok){const e=await res.json();throw new Error(e.detail||'Server error');}
+    const d=await res.json();
+    render(d);
+  }catch(e){
+    const el=document.getElementById('error');
+    el.textContent='⚠️ '+e.message;
+    el.classList.add('show');
+  }finally{
+    btn.disabled=false;
+    document.getElementById('spinner').classList.remove('show');
+  }
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function render(d){
+  const s=d.scores||{};
+
+  // Summary
+  document.getElementById('summaryBar').textContent=s.summary||'';
+
+  // Scores
+  const modeMap=[['SEO',s.seo?.score],['SXO',s.sxo?.score],['AEO',s.aeo?.score],['GEO',s.geo?.score]];
+  let sb='';
+  modeMap.forEach(([m,v])=>{
+    if(v===undefined) return;
+    const c=modeColors[m],sc=scoreColor(v);
+    sb+=`<div class="score-card">
+      <div class="sc-label" style="color:${c}">${m}</div>
+      <div class="score-ring">${ring(v,c)}<div class="sv" style="color:${sc}">${v}</div></div>
+    </div>`;
+  });
+  // Overall
+  const ov=s.overall||0,grade=s.grade||'';
+  sb+=`<div class="score-card overall-card" style="border-color:var(--accent2)">
+    <div class="sc-label" style="color:var(--accent2)">Overall</div>
+    <div class="score-ring">${ring(ov,scoreColor(ov))}<div class="sv" style="color:${scoreColor(ov)}">${ov}</div></div>
+    <div class="grade-badge" style="color:${scoreColor(ov)}">${grade}</div>
+  </div>`;
+  document.getElementById('scoreBoard').innerHTML=sb;
+
+  // Analysis tabs — "All" tab + individual tabs
+  const tabsEl=document.getElementById('analysisTabs');
+  const contEl=document.getElementById('analysisContent');
+  const modeData=[['SEO',s.seo,modeColors.SEO],['SXO',s.sxo,modeColors.SXO],['AEO',s.aeo,modeColors.AEO],['GEO',s.geo,modeColors.GEO]];
+
+  // Build "All" tab content — 4-up grid
+  let allPane=`<div class="tab-pane active" id="anAll"><div class="all-pane-grid">`;
+  modeData.forEach(([m,md,c])=>{
+    if(!md) return;
+    allPane+=`<div class="all-fw-card" style="border-top-color:${c}">
+      <h4 style="color:${c}">${m}</h4>
+      <div class="all-fw-wins"><div class="lbl">Wins</div><ul>${(md.wins||[]).map(w=>`<li>${w}</li>`).join('')}</ul></div>
+      <div class="all-fw-issues"><div class="lbl">Issues</div><ul>${(md.issues||[]).map(i=>`<li>${i}</li>`).join('')}</ul></div>
+    </div>`;
+  });
+  allPane+=`</div></div>`;
+
+  // Build individual tabs
+  let tabs=`<button class="tab active" style="border-bottom-color:var(--accent2);color:var(--accent2)" onclick="switchAnalysis(this,'anAll','var(--accent2)')">All</button>`;
+  let panes=allPane;
+  modeData.forEach(([m,md,c])=>{
+    if(!md) return;
+    tabs+=`<button class="tab" onclick="switchAnalysis(this,'an${m}','${c}')">${m}</button>`;
+    panes+=`<div class="tab-pane" id="an${m}">
+      <div class="two-col" style="margin-top:14px">
+        <div class="wi-card"><h4>✅ Wins</h4><ul class="wi-list">${(md.wins||[]).map(w=>`<li class="win">✓ ${w}</li>`).join('')}</ul></div>
+        <div class="wi-card"><h4>⚠️ Issues</h4><ul class="wi-list">${(md.issues||[]).map(i=>`<li class="issue">✗ ${i}</li>`).join('')}</ul></div>
+      </div>
+    </div>`;
+  });
+  tabsEl.innerHTML=tabs;
+  contEl.innerHTML=panes;
+
+  // Optimized
+  const opt=d.optimized||{};
+  document.getElementById('optTitle').textContent=opt.title||'';
+  const tc=opt.title_char_count||opt.title?.length||0;
+  document.getElementById('optTitleChar').textContent=`${tc} / 70 chars`;
+
+  document.getElementById('optDesc').textContent=opt.description||'';
+
+  document.getElementById('optTags').innerHTML=(opt.tags||[]).map(t=>`<span class="tag-pill">${t}</span>`).join('');
+  document.getElementById('optHashtags').innerHTML=(opt.hashtags||[]).map(h=>`<span class="hashtag-pill">${h}</span>`).join('');
+
+  // Captions — all platforms in one grid
+  const c=d.captions||{};
+  const platforms=[
+    ['📘 Facebook','facebook',c.facebook],
+    ['📸 Instagram','instagram',c.instagram],
+    ['🎵 TikTok','tiktok',c.tiktok],
+    ['𝕏 Twitter / X','twitter',c.twitter],
+    ['💼 LinkedIn','linkedin',c.linkedin]
+  ];
+  document.getElementById('captionsGrid').innerHTML=platforms.map(([label,key,text])=>`
+    <div class="cap-card">
+      <div class="cap-header">
+        <div class="cap-platform">${label}</div>
+        <button class="btn-copy" onclick="copyDirect(this,'${key}Cap')">Copy</button>
+      </div>
+      <div class="caption-box" id="${key}Cap">${escHtml(text||'')}</div>
+    </div>`).join('');
+
+  // Improvements
+  const imp=d.improvements||{};
+  const impData=[
+    ['critical','🔴 Critical',imp.critical||[]],
+    ['high','🟡 High Priority',imp.high||[]],
+    ['medium','🔵 Medium',imp.medium||[]],
+    ['quick','✨ Quick Wins',imp.quick_wins||[]]
+  ];
+  document.getElementById('impGrid').innerHTML=impData.map(([cls,label,items])=>
+    items.length?`<div class="imp-card ${cls}"><h4>${label}</h4><ul class="imp-list">${items.map(i=>`<li>${i}</li>`).join('')}</ul></div>`:''
+  ).join('');
+
+  document.getElementById('results').classList.add('show');
+  document.getElementById('results').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+// ── Tab switchers ────────────────────────────────────────────────────────────
+function switchAnalysis(btn,paneId,color){
+  btn.closest('.card').querySelectorAll('.tab').forEach(t=>{t.classList.remove('active');t.style.borderBottomColor='';t.style.color='';});
+  btn.closest('.card').querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
+  btn.classList.add('active');
+  btn.style.borderBottomColor=color;
+  btn.style.color=color;
+  document.getElementById(paneId).classList.add('active');
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function escHtml(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function copyDirect(btn,id){
+  const t=document.getElementById(id).textContent;
+  navigator.clipboard.writeText(t).then(()=>{const o=btn.textContent;btn.textContent='Copied!';setTimeout(()=>btn.textContent=o,1500);});
+}
+
+// ── Copy ─────────────────────────────────────────────────────────────────────
+function copyText(id){
+  const t=document.getElementById(id).textContent;
+  navigator.clipboard.writeText(t).then(()=>{
+    const btn=event.target;const orig=btn.textContent;btn.textContent='Copied!';
+    setTimeout(()=>btn.textContent=orig,1500);
+  });
+}
+function copyTagsText(id){
+  const chips=document.getElementById(id).querySelectorAll('span');
+  const text=[...chips].map(c=>c.textContent).join(', ');
+  navigator.clipboard.writeText(text).then(()=>{
+    const btn=event.target;const orig=btn.textContent;btn.textContent='Copied!';
+    setTimeout(()=>btn.textContent=orig,1500);
+  });
+}
+
+function clearAll(){
+  ['title','description','tags','hashtags','niche'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('titleChar').textContent='0 / 70 chars';
+  document.getElementById('results').classList.remove('show');
+  document.getElementById('error').classList.remove('show');
+}
+
+document.getElementById('title').addEventListener('keydown',e=>{if(e.ctrlKey&&e.key==='Enter')optimize();});
+</script>
+</body>
+</html>

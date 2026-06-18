@@ -1,0 +1,25 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "YouTube Research Agent",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["D:\\Claude-Access-Data\\youtube-research-agent\\app.py"],
+      "port": 8000
+    }
+  ,
+    {
+      "name": "GEO Optimization Agent",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["D:\\Claude-Access-Data\\geo-optimization-agent\\app.py"],
+      "port": 8002
+    }
+  ,
+    {
+      "name": "Content Optimizer Agent",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["D:\\Claude-Access-Data\\content-optimizer-agent\\app.py"],
+      "port": 8003
+    }
+  ]
+}
