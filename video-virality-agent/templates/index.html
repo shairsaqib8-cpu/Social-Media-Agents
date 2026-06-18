@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Video Virality Analyzer</title>
+  <link rel="stylesheet" href="/static/css/style.css?v=3" />
+</head>
+<body>
+
+<canvas id="bg-canvas"></canvas>
+
+<header>
+  <div class="logo-wrap">
+    <div class="logo-icon">🎬</div>
+    <span class="logo-text">Virality Analyzer</span>
+  </div>
+  <p class="tagline">Drop your content. Get the <span>viral formula</span>. Beat the algorithm.</p>
+  <div class="header-pills">
+    <div class="pill"><span class="dot"></span> AI-Powered Analysis</div>
+    <div class="pill">🔗 YouTube URL</div>
+    <div class="pill">🖼 Thumbnail Vision</div>
+    <div class="pill">📹 Video Upload</div>
+    <div class="pill">🏆 Competitor Intel</div>
+  </div>
+</header>
+
+<main>
+  <!-- ── Input card ── -->
+  <div class="card" id="input-section">
+    <div class="tabs">
+      <button class="tab active" data-tab="url"><span class="tab-emoji">🔗</span> YouTube URL</button>
+      <button class="tab" data-tab="thumbnail"><span class="tab-emoji">🖼</span> Thumbnail</button>
+      <button class="tab" data-tab="video"><span class="tab-emoji">📹</span> Video Upload</button>
+      <button class="tab" data-tab="full"><span class="tab-emoji">⚡</span> Full Analysis</button>
+    </div>
+
+    <!-- YouTube URL -->
+    <div class="tab-content active" id="tab-url">
+      <p class="hint">Paste any YouTube URL — we'll fetch the title, description, transcript, stats and run a full virality audit with competitor benchmarking.</p>
+      <div class="input-row">
+        <div class="url-input-wrap">
+          <span class="input-icon">🔗</span>
+          <input type="text" id="yt-url" placeholder="https://www.youtube.com/watch?v=..." />
+        </div>
+        <button class="btn-primary" onclick="analyzeURL()">Analyze →</button>
+      </div>
+    </div>
+
+    <!-- Thumbnail -->
+    <div class="tab-content" id="tab-thumbnail">
+      <p class="hint">Upload your thumbnail image — Claude Vision will score CTR appeal, contrast, emotion, text readability and give you concrete redesign suggestions.</p>
+      <div class="upload-zone" id="thumb-zone" onclick="document.getElementById('thumb-file').click()">
+        <div class="upload-icon-wrap" style="background:rgba(108,99,255,.1);">🖼</div>
+        <p>Click or drag & drop your thumbnail</p>
+        <p class="sub">Max 10 MB — we'll analyze it instantly</p>
+        <div class="file-badge">
+          <span>JPG</span><span>PNG</span><span>WEBP</span>
+        </div>
+        <input type="file" id="thumb-file" accept=".jpg,.jpeg,.png,.webp" hidden onchange="previewThumb(this)" />
+      </div>
+      <div class="thumb-preview-wrap" id="thumb-preview-wrap">
+        <img id="thumb-preview" src="" alt="Thumbnail preview" />
+      </div>
+      <button class="btn-primary" style="margin-top:16px;" onclick="analyzeThumbnail()">Analyze Thumbnail →</button>
+    </div>
+
+    <!-- Video Upload -->
+    <div class="tab-content" id="tab-video">
+      <p class="hint">Upload a video file — we extract the 3-second hook frame using computer vision, then score hook strength, visual quality, pacing and give optimization tips.</p>
+      <div class="upload-zone" id="video-zone" onclick="document.getElementById('video-file').click()">
+        <div class="upload-icon-wrap" style="background:rgba(255,101,132,.1);">📹</div>
+        <p>Click or drag & drop your video</p>
+        <p class="sub">Hook frame extracted at the 3-second mark</p>
+        <div class="file-badge">
+          <span>MP4</span><span>MOV</span><span>AVI</span><span>MKV</span><span>WEBM</span>
+        </div>
+        <input type="file" id="video-file" accept=".mp4,.mov,.avi,.mkv,.webm" hidden onchange="updateVideoZone(this)" />
+      </div>
+      <button class="btn-primary" style="margin-top:16px;" onclick="analyzeVideo()">Analyze Video →</button>
+    </div>
+
+    <!-- Full Analysis -->
+    <div class="tab-content" id="tab-full">
+      <p class="hint">The most complete audit — combine a YouTube URL with your own custom thumbnail for side-by-side virality scoring, SEO, and competitor breakdown.</p>
+      <div class="input-row" style="margin-bottom:14px;">
+        <div class="url-input-wrap">
+          <span class="input-icon">🔗</span>
+          <input type="text" id="full-url" placeholder="https://www.youtube.com/watch?v=..." />
+        </div>
+      </div>
+      <div class="upload-zone" style="padding:24px;" onclick="document.getElementById('full-thumb').click()">
+        <div class="upload-icon-wrap" style="background:rgba(0,212,255,.08);width:44px;height:44px;font-size:1.2rem;margin-bottom:10px;">🖼</div>
+        <p style="font-size:.88rem;">Optional: upload a custom thumbnail to compare</p>
+        <input type="file" id="full-thumb" accept=".jpg,.jpeg,.png,.webp" hidden />
+      </div>
+      <button class="btn-primary" style="margin-top:16px;" onclick="analyzeFull()">Run Full Analysis →</button>
+    </div>
+  </div>
+
+  <!-- ── Loader ── -->
+  <div id="loader" style="display:none;" class="card loader-wrap">
+    <div class="loader-orb"></div>
+    <div class="loader-text" id="loader-text">Analyzing your content…</div>
+    <div class="loader-sub">Claude AI is reviewing every frame and signal</div>
+    <div class="loader-steps">
+      <div class="loader-step active" id="step-1">📡 Fetching data</div>
+      <div class="loader-step" id="step-2">🧠 AI analysis</div>
+      <div class="loader-step" id="step-3">🏆 Competitor scan</div>
+      <div class="loader-step" id="step-4">✨ Building report</div>
+    </div>
+  </div>
+
+  <!-- ── Results ── -->
+  <div id="results" style="display:none;">
+
+    <!-- Score Hero -->
+    <div class="score-hero" id="score-card" style="display:none;">
+      <div class="ring-wrap">
+        <svg class="score-ring" viewBox="0 0 140 140" xmlns="http://www.w3.org/2000/svg">
+          <circle class="ring-bg" cx="70" cy="70" r="65"/>
+          <circle class="ring-glow" id="ring-glow" cx="70" cy="70" r="65"/>
+          <circle class="ring-fill" id="ring-fill" cx="70" cy="70" r="65"/>
+        </svg>
+        <div class="ring-center">
+          <span class="ring-num" id="score-num">–</span>
+          <span class="ring-label">/ 100</span>
+        </div>
+      </div>
+
+      <div class="score-info">
+        <div class="score-title" id="score-title">Virality Score</div>
+        <div class="score-grade-badge badge" id="score-grade">–</div>
+        <div class="score-meta-row" style="margin-top:12px;">
+          <span class="viral-badge" id="viral-badge">–</span>
+          <span class="improve-text" id="improve-text"></span>
+        </div>
+      </div>
+
+      <div class="score-breakdown" id="breakdown-bars"></div>
+    </div>
+
+    <!-- Metadata -->
+    <div class="card" id="meta-card" style="display:none;">
+      <h2><div class="icon-badge" style="background:rgba(108,99,255,.15);">📺</div> Video Metadata</h2>
+      <div id="meta-content"></div>
+    </div>
+
+    <!-- Thumbnail Analysis -->
+    <div class="card" id="thumb-card" style="display:none;">
+      <h2><div class="icon-badge" style="background:rgba(255,101,132,.15);">🖼</div> Thumbnail Analysis</h2>
+      <div id="thumb-content"></div>
+    </div>
+
+    <!-- Content Analysis -->
+    <div class="card" id="content-card" style="display:none;">
+      <h2><div class="icon-badge" style="background:rgba(67,233,123,.15);">🧠</div> Content & Title Analysis</h2>
+      <div id="content-content"></div>
+    </div>
+
+    <!-- SEO -->
+    <div class="card" id="seo-card" style="display:none;">
+      <h2><div class="icon-badge" style="background:rgba(0,212,255,.12);">🔍</div> SEO Recommendations</h2>
+      <div id="seo-content"></div>
+    </div>
+
+    <!-- Competitors -->
+    <div class="card" id="competitor-card" style="display:none;">
+      <h2><div class="icon-badge" style="background:rgba(249,202,36,.12);">🏆</div> Competitor Intelligence</h2>
+      <div id="competitor-content"></div>
+    </div>
+
+  </div>
+</main>
+
+<div id="error-toast"></div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>

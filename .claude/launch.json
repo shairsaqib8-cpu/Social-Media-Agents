@@ -21,5 +21,12 @@
       "runtimeArgs": ["D:\\Claude-Access-Data\\content-optimizer-agent\\app.py"],
       "port": 8003
     }
+  ,
+    {
+      "name": "Video Virality Analyzer",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["D:\\Claude-Access-Data\\video-virality-agent\\app.py"],
+      "port": 8004
+    }
   ]
 }
