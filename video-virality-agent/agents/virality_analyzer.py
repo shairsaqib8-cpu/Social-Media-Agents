@@ -483,7 +483,12 @@ def analyze_uploaded_video(video_path: str) -> dict:
     seo_score   = 50
 
     content = _content_score(hook_score, audio_score, visual_score, title_score, seo_score)
-    grade   = _grade(content)
+
+    # Apply same blend as URL mode — unproven content gets a 25/100 performance prior
+    # (no audience has validated this yet, so it cannot score as high as proven viral content)
+    unproven_perf = 25
+    final = max(2, min(98, round(unproven_perf * 0.60 + content * 0.40)))
+    grade = _grade(final)
 
     # Build critique prompt
     frame_facts_str = json.dumps(facts) if facts else "Frame extraction failed"
@@ -492,18 +497,20 @@ def analyze_uploaded_video(video_path: str) -> dict:
         b64i, mimei = _b64(frame_path)
         b64_content = [{"type":"image_url","image_url":{"url":f"data:{mimei};base64,{b64i}"}}]
 
-    critique = f"""Video upload analysis. Score: {content}/100 ({grade}).
+    critique = f"""Video upload analysis. Score: {final}/100 ({grade}).
 
 HOW SCORE WAS COMPUTED (do not change these):
-- Hook/audio score: {hook_score}/100
-  * Transcript present: {sig['transcript_present']}
-  * Starts with generic opener ("hey guys / welcome back"): {sig['starts_generic']}
-  * Has strong hook trigger in first 30s: {sig['has_hook_trigger']}
-  * Filler word percentage: {sig['filler_pct']}%
-  * Words per minute: {sig['wpm']} (ideal: 130-160)
-- Visual score: {visual_score}/100
-  * Frame facts: {frame_facts_str}
-- Overall content quality: {content}/100
+- Content quality score: {content}/100
+  * Hook/audio score: {hook_score}/100
+    - Transcript present: {sig['transcript_present']}
+    - Starts with generic opener ("hey guys / welcome back"): {sig['starts_generic']}
+    - Has strong hook trigger in first 30s: {sig['has_hook_trigger']}
+    - Filler word percentage: {sig['filler_pct']}%
+    - Words per minute: {sig['wpm']} (ideal: 130-160)
+  * Visual score: {visual_score}/100
+    - Frame facts: {frame_facts_str}
+- Performance prior: {unproven_perf}/100 (no YouTube data — content is unproven)
+- FINAL SCORE = 60% performance ({unproven_perf}) + 40% content ({content}) = {final}/100
 
 Transcript (first 800 chars): {transcript[:800] if transcript else "NO AUDIO DETECTED — video may be silent or audio extraction failed"}
 
@@ -513,13 +520,13 @@ If frame shows no face/bad lighting/no energy: say it directly.
 
 Return JSON only:
 {{
-  "virality_score": {content},
+  "virality_score": {final},
   "grade": "{grade}",
   "first_impression": "<what a cold viewer sees and hears in first 3 seconds — be specific>",
   "breakdown": {{
     "hook_strength": {hook_score},
     "visual_quality": {visual_score},
-    "engagement_signals": {min(hook_score, visual_score)},
+    "engagement_signals": {unproven_perf},
     "pacing": {audio_score},
     "content_depth": {content}
   }},
@@ -557,12 +564,12 @@ Return JSON only:
         result = {}
 
     # Always enforce Python-computed values
-    result["virality_score"] = content
+    result["virality_score"] = final
     result["grade"] = grade
     result["breakdown"] = {
         "hook_strength":      hook_score,
         "visual_quality":     visual_score,
-        "engagement_signals": min(hook_score, visual_score),
+        "engagement_signals": unproven_perf,
         "pacing":             audio_score,
         "content_depth":      content,
     }
