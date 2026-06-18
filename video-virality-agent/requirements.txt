@@ -1,7 +1,7 @@
 fastapi
 uvicorn[standard]
 python-dotenv
-anthropic
+groq
 requests
 youtube-transcript-api
 yt-dlp

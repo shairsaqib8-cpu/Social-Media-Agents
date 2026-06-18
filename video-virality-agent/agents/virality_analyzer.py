@@ -1,29 +1,40 @@
 import os
-import base64
-import math
 import re
+import json
+import base64
+import tempfile
 from pathlib import Path
-import anthropic
+from groq import Groq
 
 
-def _claude_client() -> anthropic.Anthropic:
-    key = os.getenv("ANTHROPIC_API_KEY", "")
+TEXT_MODEL = "llama-3.3-70b-versatile"
+VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+
+
+def _client() -> Groq:
+    key = os.getenv("GROQ_API_KEY", "")
     if not key:
-        raise ValueError("ANTHROPIC_API_KEY not set in .env")
-    return anthropic.Anthropic(api_key=key)
+        raise ValueError("GROQ_API_KEY not set in .env")
+    return Groq(api_key=key)
 
 
-def _image_to_b64(path: str) -> tuple[str, str]:
-    suffix = Path(path).suffix.lower()
-    mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
-            "webp": "image/webp", "gif": "image/gif"}.get(suffix.lstrip("."), "image/jpeg")
+def _parse_json(text: str) -> dict:
+    text = text.strip()
+    text = re.sub(r"^```[a-z]*\n?", "", text)
+    text = re.sub(r"\n?```$", "", text)
+    return json.loads(text)
+
+
+def _image_b64(path: str) -> tuple[str, str]:
+    suffix = Path(path).suffix.lower().lstrip(".")
+    mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}.get(suffix, "image/jpeg")
     with open(path, "rb") as f:
         return base64.standard_b64encode(f.read()).decode(), mime
 
 
 def analyze_thumbnail(image_path: str) -> dict:
-    client = _claude_client()
-    b64, mime = _image_to_b64(image_path)
+    client = _client()
+    b64, mime = _image_b64(image_path)
 
     prompt = """You are a YouTube thumbnail expert. Analyze this thumbnail and respond with valid JSON only — no markdown, no explanation.
 
@@ -45,22 +56,18 @@ Return exactly this structure:
   "ctr_potential": "<Low/Medium/High/Very High>"
 }"""
 
-    msg = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=800,
+    response = client.chat.completions.create(
+        model=VISION_MODEL,
         messages=[{
             "role": "user",
             "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
                 {"type": "text", "text": prompt},
             ],
         }],
+        max_tokens=800,
     )
-    import json
-    text = msg.content[0].text.strip()
-    text = re.sub(r"^```[a-z]*\n?", "", text)
-    text = re.sub(r"\n?```$", "", text)
-    return json.loads(text)
+    return _parse_json(response.choices[0].message.content)
 
 
 def analyze_video_content(
@@ -71,7 +78,7 @@ def analyze_video_content(
     stats: dict,
     duration: str,
 ) -> dict:
-    client = _claude_client()
+    client = _client()
 
     stats_block = (
         f"Views: {stats.get('view_count', 'N/A')}, "
@@ -119,25 +126,19 @@ Return exactly this structure:
   "estimated_improvement": "<percentage range if tips applied>"
 }}"""
 
-    msg = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1500,
+    response = client.chat.completions.create(
+        model=TEXT_MODEL,
         messages=[{"role": "user", "content": prompt}],
+        max_tokens=1500,
     )
-    import json
-    text = msg.content[0].text.strip()
-    text = re.sub(r"^```[a-z]*\n?", "", text)
-    text = re.sub(r"\n?```$", "", text)
-    return json.loads(text)
+    return _parse_json(response.choices[0].message.content)
 
 
 def analyze_uploaded_video(video_path: str) -> dict:
-    """Extract frames and analyze a locally uploaded video file."""
-    client = _claude_client()
+    client = _client()
 
-    # Try to extract a frame using cv2; fall back to text-only analysis
-    frame_b64 = None
-    frame_mime = "image/jpeg"
+    frame_path = None
+    duration_sec = 0
     try:
         import cv2
         cap = cv2.VideoCapture(video_path)
@@ -145,28 +146,23 @@ def analyze_uploaded_video(video_path: str) -> dict:
         fps = cap.get(cv2.CAP_PROP_FPS) or 30
         duration_sec = total / fps if fps else 0
 
-        # Grab frame at 3-second mark (hook frame)
         target = min(int(3 * fps), max(0, total - 1))
         cap.set(cv2.CAP_PROP_POS_FRAMES, target)
         ret, frame = cap.read()
         cap.release()
 
         if ret:
-            import cv2
-            import tempfile, os as _os
             tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
             cv2.imwrite(tmp.name, frame)
             tmp.close()
-            with open(tmp.name, "rb") as f:
-                frame_b64 = base64.standard_b64encode(f.read()).decode()
-            _os.unlink(tmp.name)
+            frame_path = tmp.name
     except Exception:
-        duration_sec = 0
+        pass
 
-    import json
-
-    if frame_b64:
-        prompt = """You are a YouTube video virality expert analyzing a video frame (from the 3-second hook moment).
+    try:
+        if frame_path:
+            b64, mime = _image_b64(frame_path)
+            prompt = """You are a YouTube video virality expert analyzing a video frame (from the 3-second hook moment).
 Assess hook strength, visual quality, on-screen elements, pacing feel, and return valid JSON only.
 
 Return exactly:
@@ -185,19 +181,19 @@ Return exactly:
   "viral_potential": "<Low/Medium/High/Very High>",
   "estimated_improvement": "<range if tips applied>"
 }"""
-        msg = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1000,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": frame_mime, "data": frame_b64}},
-                    {"type": "text", "text": prompt},
-                ],
-            }],
-        )
-    else:
-        prompt = f"""A video file was uploaded (duration ~{int(duration_sec)}s). Without visual frames available, provide a general virality framework analysis.
+            response = client.chat.completions.create(
+                model=VISION_MODEL,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                        {"type": "text", "text": prompt},
+                    ],
+                }],
+                max_tokens=1000,
+            )
+        else:
+            prompt = f"""A video file was uploaded (duration ~{int(duration_sec)}s). Without visual frames available, provide a general virality framework analysis.
 Return valid JSON only matching this structure:
 {{
   "virality_score": 50,
@@ -206,24 +202,27 @@ Return valid JSON only matching this structure:
   "hook_analysis": {{"verdict": "Unable to extract frames for analysis", "rewrite": "Ensure your first 3 seconds have a bold visual hook"}},
   "optimization_tips": ["Add strong visual hook in first 3 seconds", "Use text overlays for key points", "Include face/reaction shots", "Keep pacing tight — cut dead air", "Add background music"],
   "viral_potential": "Medium",
-  "estimated_improvement": "20–40% with hook optimization"
+  "estimated_improvement": "20-40% with hook optimization"
 }}"""
-        msg = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=800,
-            messages=[{"role": "user", "content": prompt}],
-        )
+            response = client.chat.completions.create(
+                model=TEXT_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=800,
+            )
 
-    text = msg.content[0].text.strip()
-    text = re.sub(r"^```[a-z]*\n?", "", text)
-    text = re.sub(r"\n?```$", "", text)
-    return json.loads(text)
+        return _parse_json(response.choices[0].message.content)
+    finally:
+        if frame_path:
+            try:
+                os.unlink(frame_path)
+            except Exception:
+                pass
 
 
 def compare_competitors(main_title: str, competitors: list[dict]) -> dict:
     if not competitors:
         return {"summary": "No competitor data available.", "insights": []}
-    client = _claude_client()
+    client = _client()
 
     comp_lines = "\n".join(
         f"{i+1}. \"{c['title']}\" by {c['channel']}"
@@ -245,13 +244,9 @@ Return:
   "positioning_advice": "..."
 }}"""
 
-    msg = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=800,
+    response = client.chat.completions.create(
+        model=TEXT_MODEL,
         messages=[{"role": "user", "content": prompt}],
+        max_tokens=800,
     )
-    import json
-    text = msg.content[0].text.strip()
-    text = re.sub(r"^```[a-z]*\n?", "", text)
-    text = re.sub(r"\n?```$", "", text)
-    return json.loads(text)
+    return _parse_json(response.choices[0].message.content)
