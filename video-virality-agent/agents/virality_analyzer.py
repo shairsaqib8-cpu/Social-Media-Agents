@@ -1,17 +1,20 @@
 """
 Virality Analyzer — unified scoring for URL and video upload.
 
-SCORING PHILOSOPHY:
-  Two separate scores always shown:
-    1. content_score  (0-100): pure quality of hook, audio, script, visuals, title/SEO
-    2. performance_score (0-100): anchored to real YouTube metrics (only for URL mode)
+SCORING SYSTEM (training document):
+  10 dimensions, each scored /10 by Python. Total = sum = /100.
+  1.  Hook      /10
+  2.  Story     /10
+  3.  Script    /10
+  4.  Audio     /10
+  5.  Visual    /10  (frame analysis, capped at 72, converted by /7.2)
+  6.  Editing   /10
+  7.  Retention /10  (real engagement for URL, predicted for upload)
+  8.  Thumbnail /10
+  9.  Title     /10
+  10. Virality  /10
 
-  The final virality_score returned to the frontend is:
-    - URL mode:   weighted blend  (content 40% + performance 60%)
-    - Upload mode: content_score only  (no YouTube data available)
-
-  This means the same video analysed via URL and via upload will score
-  similarly on content quality, while URL additionally reflects real performance.
+  Final score = sum of all 10 (clamped 1-100).
 """
 
 import os, re, json, base64, tempfile, math, time
@@ -158,17 +161,6 @@ def _performance_score(view_count: int, like_ratio: float, comment_ratio: float)
     return max(2, min(98, base))
 
 
-def _content_score(hook_score: int, audio_score: int, visual_score: int,
-                   title_score: int, seo_score: int) -> int:
-    """Weighted content quality score — same formula for URL and upload."""
-    raw = (hook_score   * 0.30 +
-           audio_score  * 0.20 +
-           visual_score * 0.20 +
-           title_score  * 0.15 +
-           seo_score    * 0.15)
-    return max(2, min(98, round(raw)))
-
-
 # ─── audio extraction & analysis ─────────────────────────────────────────────
 
 def _extract_audio(video_path: str) -> str:
@@ -269,7 +261,7 @@ def _get_frame_facts(b64_img: str, mime: str, client: Groq) -> dict:
 
 
 def _score_visual(facts: dict) -> int:
-    """Convert visual facts to 0-100 score. Ceiling is 72 — no thumbnail
+    """Convert visual facts to 0-72 score. Ceiling is 72 — no thumbnail
     earns an A without proven CTR data."""
     s = 20  # start harsh — most thumbnails are mediocre
     if facts.get("has_face"):                 s += 10
@@ -294,7 +286,7 @@ def _score_visual(facts: dict) -> int:
 
 
 def _score_title(title: str, tags: list, description: str) -> tuple[int, int]:
-    """Return (title_score, seo_score) from metadata."""
+    """Return (title_score_0_100, seo_score_0_100) from metadata."""
     # title scoring
     ts = 40
     import re as _re
@@ -319,158 +311,120 @@ def _score_title(title: str, tags: list, description: str) -> tuple[int, int]:
     return max(5, min(95, ts)), max(5, min(95, ss))
 
 
-# ─── public API ───────────────────────────────────────────────────────────────
+# ─── new /10 scoring functions ────────────────────────────────────────────────
 
-def analyze_thumbnail(image_path: str) -> dict:
-    client = _client()
-    b64, mime = _b64(image_path)
-    facts = _get_frame_facts(b64, mime, client)
-    visual = _score_visual(facts)
-    grade  = _grade(visual)
-
-    r = _groq_call(client,
-        model=TEXT_MODEL,
-        messages=[
-            {"role":"system","content":CRITIC_SYSTEM},
-            {"role":"user","content":f"""This YouTube thumbnail scored {visual}/100 ({grade}).
-
-Detected facts: {json.dumps(facts)}
-
-Write a specific brutal critique. Explain WHY the score is {visual}. Be pixel-level specific.
-
-Return JSON only:
-{{
-  "score": {visual},
-  "grade": "{grade}",
-  "ctr_verdict": "<one sentence: will this get clicked in a competitive feed — be direct>",
-  "what_viewer_sees_in_03_seconds": "<exactly what registers in 0.3 seconds of scrolling>",
-  "strengths": ["<only real strengths, max 2, omit if none>"],
-  "weaknesses": ["<exact element that fails and why>", "<another>", "<another>"],
-  "improvements": ["<exact fix — size, color, position, expression>", "<fix 2>", "<fix 3>"],
-  "elements": {json.dumps(facts)},
-  "ctr_potential": "<Low/Medium/High/Very High>"
-}}"""}
-        ],
-        max_tokens=900, temperature=0.2,
-    )
-    result = _parse_json(r.choices[0].message.content)
-    result["score"] = visual   # enforce computed score
-    result["grade"] = grade
-    return result
+def _score_hook_10(sig: dict) -> int:
+    """0-10: Hook quality from audio signals."""
+    s = 5
+    if sig["starts_generic"]: s -= 3
+    if sig["has_hook_trigger"]: s += 2
+    if not sig["transcript_present"]: return 2
+    if sig["filler_pct"] > 15: s -= 2
+    elif sig["filler_pct"] > 8: s -= 1
+    return max(1, min(10, s))
 
 
-def analyze_video_content(title, description, tags, transcript, stats, duration) -> dict:
-    client = _client()
+def _score_story_10(transcript: str, sig: dict) -> int:
+    """0-10: Narrative arc quality."""
+    if not sig["transcript_present"]: return 2
+    s = 4
+    t = transcript.lower()
+    if any(w in t for w in ["problem","issue","struggle","before","challenge"]): s += 1
+    if any(w in t for w in ["but","however","then","until","discovered","suddenly"]): s += 1
+    if any(w in t for w in ["result","finally","outcome","learned","achieved","now"]): s += 1
+    if sig["has_hook_trigger"]: s += 1
+    if sig["starts_generic"]: s -= 2
+    if sig["word_count"] < 50: s -= 2
+    return max(1, min(10, s))
 
-    view_count    = stats.get("view_count", 0)
-    like_count    = stats.get("like_count", 0)
-    comment_count = stats.get("comment_count", 0)
-    like_ratio    = round(like_count / view_count * 100, 2) if view_count > 0 else 0
-    comment_ratio = round(comment_count / view_count * 100, 2) if view_count > 0 else 0
 
-    # Compute all sub-scores in Python
-    perf_score = _performance_score(view_count, like_ratio, comment_ratio)
-    sig        = _audio_signals(transcript or "")
-    hook_score = _score_audio(sig)
-    title_score, seo_score = _score_title(title, tags or [], description or "")
-    visual_score = 50   # no frame available for URL-only mode
+def _score_script_10(sig: dict) -> int:
+    """0-10: Script clarity and pacing."""
+    if not sig["transcript_present"]: return 2
+    s = 6
+    if sig["starts_generic"]: s -= 2
+    if sig["filler_pct"] > 15: s -= 3
+    elif sig["filler_pct"] > 8: s -= 2
+    elif sig["filler_pct"] > 4: s -= 1
+    wpm = sig["wpm"]
+    if wpm > 0:
+        if wpm < 100 or wpm > 200: s -= 2
+        elif 130 <= wpm <= 165: s += 2
+    return max(1, min(10, s))
 
-    content = _content_score(hook_score, hook_score, visual_score, title_score, seo_score)
 
-    # Weighted blend: 60% real performance + 40% content quality
-    final = round(perf_score * 0.60 + content * 0.40)
-    final = max(2, min(98, final))
-    grade = _grade(final)
+def _score_audio_10(sig: dict) -> int:
+    """0-10: Audio quality (same signals as hook, slightly different weights)."""
+    if not sig["transcript_present"]: return 2
+    s = 6
+    if sig["filler_pct"] > 15: s -= 3
+    elif sig["filler_pct"] > 8: s -= 2
+    elif sig["filler_pct"] > 4: s -= 1
+    if sig["starts_generic"]: s -= 1
+    wpm = sig["wpm"]
+    if wpm > 0:
+        if wpm < 100 or wpm > 210: s -= 2
+        elif 130 <= wpm <= 165: s += 2
+    return max(1, min(10, s))
 
-    prompt = f"""YouTube video audit. Final score: {final}/100 ({grade}).
 
-How this score was computed (DO NOT change these numbers):
-- Performance score (real YouTube data): {perf_score}/100
-  * Views: {view_count:,}
-  * Like ratio: {like_ratio}% (viral average = 5-8%)
-  * Comment ratio: {comment_ratio}%
-- Content quality score: {content}/100
-  * Hook/audio: {hook_score}/100 — generic opener: {sig['starts_generic']}, hook trigger: {sig['has_hook_trigger']}, filler words: {sig['filler_pct']}%
-  * Title strength: {title_score}/100
-  * SEO strength: {seo_score}/100
+def _score_visual_10(facts: dict) -> int:
+    """0-10: Visual quality from frame facts (converts /72 to /10)."""
+    raw = _score_visual(facts)
+    return max(1, min(10, round(raw / 7.2)))
 
-Title: {title}
-Tags: {', '.join((tags or [])[:12]) or 'NONE — zero SEO effort'}
-Description: {(description or 'EMPTY')[:300]}
-Transcript excerpt: {(transcript or 'NONE')[:1500]}
 
-Write the audit. Explain exactly why each sub-score is what it is. Be specific and harsh.
+def _score_editing_10(cut_count: int, duration_sec: float, wpm: int) -> int:
+    """0-10: Edit pacing quality."""
+    raw = _pacing_score(cut_count, duration_sec, wpm)
+    return max(1, min(10, round(raw / 9)))
 
-Return JSON only:
-{{
-  "virality_score": {final},
-  "grade": "{grade}",
-  "performance_verdict": "<one sentence: why this video got the exact views it got — name the real reason>",
-  "biggest_mistake": "<the single most damaging issue — be specific, not generic>",
-  "breakdown": {{
-    "hook_strength": {hook_score},
-    "title_power": {title_score},
-    "seo_strength": {seo_score},
-    "engagement_signals": {perf_score},
-    "content_depth": {content}
-  }},
-  "audio_analysis": {{
-    "verdict": "<is the audio confident and professional, or amateurish? specific>",
-    "filler_word_problem": "<{sig['filler_pct']}% filler words — what is the exact impact on credibility?>",
-    "pacing_verdict": "<{sig['wpm']} wpm — ideal is 130-160 — what is the effect on viewer retention?>",
-    "audio_visual_sync": "<does what is SAID match what a viewer would expect to SEE? is there coherence or disconnect?>",
-    "script_quality": "<tight and punchy or rambling? what specific lines should be cut?>"
-  }},
-  "title_analysis": {{
-    "verdict": "<strong or weak — specifically why>",
-    "issues": ["<exact issue with this title>", "<another>"],
-    "alternative_titles": ["<rewritten title 1 — more specific, curiosity-driven>", "<title 2>", "<title 3>"]
-  }},
-  "hook_analysis": {{
-    "what_creator_actually_said": "<quote or paraphrase the actual first 30 seconds from transcript>",
-    "verdict": "<did the hook earn the viewer or waste them — be harsh and specific>",
-    "why_viewers_left": "<the exact moment and reason retention dropped>",
-    "rewritten_hook": "<word-for-word replacement script for first 30 seconds>"
-  }},
-  "seo_analysis": {{
-    "tag_verdict": "<are these tags hitting real search queries or useless?>",
-    "suggested_tags": ["<high-volume tag>", "<long-tail tag>", "<niche tag>", "<trending tag>", "<competitor tag>"],
-    "description_verdict": "<is the description doing SEO work or wasted space?>",
-    "description_rewrite": "<rewritten first 150 chars — keyword rich>"
-  }},
-  "optimization_tips": [
-    "<VISUAL FIX: exact shot/scene to add or reshoot — describe the frame, angle, what should be visible>",
-    "<AUDIO FIX: exact script line to change or re-record — write the replacement word-for-word>",
-    "<EDIT FIX: specific cut, transition, or pacing change with exact timestamp>",
-    "<TITLE/SEO FIX: exact rewritten title or tag set to use instead>",
-    "<HOOK FIX: word-for-word first 15 seconds script + describe opening visual>"
-  ],
-  "production_script_notes": [
-    "<LINE 1: exact script line that must change and what to replace it with>",
-    "<LINE 2: another specific line>",
-    "<VISUAL DIRECTION 1: exact B-roll or camera instruction>"
-  ],
-  "viral_potential": "<Low/Medium/High/Very High>",
-  "if_reshot_today": "<realistic view count if ALL fixes applied — and exactly why>"
-}}"""
 
-    r = _groq_call(client,
-        model=TEXT_MODEL,
-        messages=[{"role":"system","content":CRITIC_SYSTEM}, {"role":"user","content":prompt}],
-        max_tokens=2000, temperature=0.15,
-    )
-    result = _parse_json(r.choices[0].message.content)
-    # Enforce Python-computed values
-    result["virality_score"] = final
-    result["grade"] = grade
-    result["breakdown"] = {
-        "hook_strength":      hook_score,
-        "title_power":        title_score,
-        "seo_strength":       seo_score,
-        "engagement_signals": perf_score,
-        "content_depth":      content,
-    }
-    return result
+def _score_retention_10(view_count: int, like_ratio: float, comment_ratio: float) -> int:
+    """0-10: Audience retention from real engagement data."""
+    raw = _performance_score(view_count, like_ratio, comment_ratio)
+    return max(1, min(10, round(raw / 10)))
+
+
+def _score_retention_predicted_10(hook_10: int, story_10: int, editing_10: int) -> int:
+    """0-10: Predicted retention for upload mode (no real data)."""
+    return max(1, min(10, round((hook_10*0.4 + story_10*0.3 + editing_10*0.3))))
+
+
+def _score_thumbnail_10(facts: dict) -> int:
+    """0-10: Thumbnail CTR potential."""
+    return _score_visual_10(facts)
+
+
+def _score_title_10(title: str, tags: list, description: str) -> tuple[int, int]:
+    """Return (title_10, seo_10)."""
+    ts, ss = _score_title(title, tags, description)
+    return max(1, min(10, round(ts/10))), max(1, min(10, round(ss/10)))
+
+
+def _score_virality_10(hook_10: int, story_10: int, visual_10: int, retention_10: int, editing_10: int) -> int:
+    """0-10: Viral potential prediction."""
+    weighted = (hook_10*0.30 + visual_10*0.25 + story_10*0.20 + retention_10*0.15 + editing_10*0.10)
+    return max(1, min(10, round(weighted)))
+
+
+# ─── pacing & frame helpers ───────────────────────────────────────────────────
+
+def _pacing_score(cut_count: int, duration_sec: float, wpm: int) -> int:
+    """Score edit pacing — YouTube rewards fast, energetic cutting."""
+    s = 45
+    if duration_sec > 0:
+        cpm = cut_count / (duration_sec / 60)
+        if cpm < 1:    s -= 20
+        elif cpm < 3:  s -= 10
+        elif cpm < 6:  s += 0
+        elif cpm < 12: s += 12
+        else:          s += 18
+    if wpm > 0:
+        if wpm < 100:            s -= 10
+        elif wpm > 200:          s -= 8
+        elif 130 <= wpm <= 170:  s += 10
+    return max(5, min(90, s))
 
 
 def _extract_video_frames(video_path: str) -> tuple[list[dict], float, int]:
@@ -630,21 +584,228 @@ Answer with JSON only — no markdown:
     }
 
 
-def _pacing_score(cut_count: int, duration_sec: float, wpm: int) -> int:
-    """Score edit pacing — YouTube rewards fast, energetic cutting."""
-    s = 45
-    if duration_sec > 0:
-        cpm = cut_count / (duration_sec / 60)
-        if cpm < 1:    s -= 20
-        elif cpm < 3:  s -= 10
-        elif cpm < 6:  s += 0
-        elif cpm < 12: s += 12
-        else:          s += 18
-    if wpm > 0:
-        if wpm < 100:            s -= 10
-        elif wpm > 200:          s -= 8
-        elif 130 <= wpm <= 170:  s += 10
-    return max(5, min(90, s))
+# ─── public API ───────────────────────────────────────────────────────────────
+
+def analyze_thumbnail(image_path: str) -> dict:
+    client = _client()
+    b64, mime = _b64(image_path)
+    facts = _get_frame_facts(b64, mime, client)
+    thumb_10 = _score_thumbnail_10(facts)
+    visual_raw = _score_visual(facts)
+    grade = _grade(thumb_10 * 10)
+
+    r = _groq_call(client,
+        model=TEXT_MODEL,
+        messages=[
+            {"role":"system","content":CRITIC_SYSTEM},
+            {"role":"user","content":f"""This YouTube thumbnail scored {thumb_10}/10 ({grade}).
+
+Detected facts: {json.dumps(facts)}
+
+Write a specific brutal critique. Explain WHY the score is {thumb_10}/10. Be pixel-level specific.
+
+Return JSON only:
+{{
+  "score": {thumb_10},
+  "grade": "{grade}",
+  "ctr_prediction": "<one sentence: will this get clicked in a competitive feed — be direct>",
+  "what_viewer_sees_in_03_seconds": "<exactly what registers in 0.3 seconds of scrolling>",
+  "strengths": ["<only real strengths, max 2, omit if none>"],
+  "weaknesses": ["<exact element that fails and why>", "<another>", "<another>"],
+  "improvements": ["<exact fix — size, color, position, expression>", "<fix 2>", "<fix 3>"],
+  "elements": {json.dumps(facts)},
+  "ctr_potential": "<Low/Medium/High/Very High>",
+  "five_thumbnail_concepts": [
+    "<concept 1: what to show, text overlay, colors, layout>",
+    "<concept 2>",
+    "<concept 3>",
+    "<concept 4>",
+    "<concept 5>"
+  ],
+  "content_team_checklist": [
+    "[ ] <checkbox item for production team>",
+    "[ ] <another>",
+    "[ ] <another>"
+  ]
+}}"""}
+        ],
+        max_tokens=1200, temperature=0.2,
+    )
+    result = _parse_json(r.choices[0].message.content)
+    result["score"] = thumb_10   # enforce computed score
+    result["grade"] = grade
+    result["ctr_prediction"] = result.get("ctr_prediction", result.get("ctr_verdict", ""))
+    return result
+
+
+def analyze_video_content(title, description, tags, transcript, stats, duration) -> dict:
+    client = _client()
+
+    view_count    = stats.get("view_count", 0)
+    like_count    = stats.get("like_count", 0)
+    comment_count = stats.get("comment_count", 0)
+    like_ratio    = round(like_count / view_count * 100, 2) if view_count > 0 else 0
+    comment_ratio = round(comment_count / view_count * 100, 2) if view_count > 0 else 0
+
+    # Compute all /10 scores in Python
+    sig         = _audio_signals(transcript or "", duration or 0)
+    hook_10     = _score_hook_10(sig)
+    story_10    = _score_story_10(transcript or "", sig)
+    script_10   = _score_script_10(sig)
+    audio_10    = _score_audio_10(sig)
+    # No video frames in URL mode — use neutral visual
+    visual_facts: dict = {}
+    visual_10   = 5  # neutral when no frame available
+    editing_10  = 5  # neutral when no video file
+    retention_10 = _score_retention_10(view_count, like_ratio, comment_ratio)
+    thumbnail_10 = 5  # no thumbnail image provided
+    title_10, seo_10 = _score_title_10(title, tags or [], description or "")
+    # title dimension = average of title strength and SEO
+    title_dim_10 = max(1, min(10, round((title_10 + seo_10) / 2)))
+    virality_10  = _score_virality_10(hook_10, story_10, visual_10, retention_10, editing_10)
+
+    final_score = hook_10 + story_10 + script_10 + audio_10 + visual_10 + editing_10 + retention_10 + thumbnail_10 + title_dim_10 + virality_10
+    final_score = max(1, min(100, final_score))
+    grade = _grade(final_score)
+
+    # Also compute legacy scores for prompt context
+    perf_score   = _performance_score(view_count, like_ratio, comment_ratio)
+    title_score, seo_score = _score_title(title, tags or [], description or "")
+    hook_score_100 = _score_audio(sig)
+
+    prompt = f"""YouTube video full audit. Final score: {final_score}/100 ({grade}).
+
+HOW THIS SCORE WAS COMPUTED (10 dimensions, each /10 — DO NOT change these numbers):
+- Hook:      {hook_10}/10  (generic opener: {sig['starts_generic']}, hook trigger: {sig['has_hook_trigger']}, filler: {sig['filler_pct']}%)
+- Story:     {story_10}/10  (narrative arc from transcript)
+- Script:    {script_10}/10  (wpm: {sig['wpm']}, filler: {sig['filler_pct']}%)
+- Audio:     {audio_10}/10  (audio quality signals)
+- Visual:    {visual_10}/10  (no frame available — URL mode)
+- Editing:   {editing_10}/10  (no video file — URL mode)
+- Retention: {retention_10}/10  (real YouTube data: {view_count:,} views, {like_ratio}% likes, {comment_ratio}% comments)
+- Thumbnail: {thumbnail_10}/10  (no image provided)
+- Title:     {title_dim_10}/10  (title strength + SEO)
+- Virality:  {virality_10}/10  (weighted viral prediction)
+TOTAL: {final_score}/100
+
+Title: {title}
+Tags: {', '.join((tags or [])[:12]) or 'NONE — zero SEO effort'}
+Description: {(description or 'EMPTY')[:300]}
+Transcript excerpt: {(transcript or 'NONE')[:1500]}
+
+Write a brutal, honest audit. Reference specific data. Name exact timestamps when available.
+Every criticism must include: evidence, timestamp (if available), why it hurts, actionable fix, expected impact.
+
+Return JSON only — include ALL fields:
+{{
+  "overall_score": {final_score},
+  "grade": "{grade}",
+  "confidence_level": "<High/Medium/Low — based on data quality>",
+  "executive_summary": "<2-3 sentence honest summary of this video's performance potential>",
+  "scores": {{
+    "hook": {hook_10},
+    "story": {story_10},
+    "script": {script_10},
+    "audio": {audio_10},
+    "visual": {visual_10},
+    "editing": {editing_10},
+    "retention": {retention_10},
+    "thumbnail": {thumbnail_10},
+    "title": {title_dim_10},
+    "virality": {virality_10}
+  }},
+  "strengths": ["<only real strength with evidence, max 3>"],
+  "weaknesses": ["<weakness with specific evidence>", "<another>"],
+  "critical_issues": [
+    {{
+      "issue": "<specific problem>",
+      "timestamp": "<HH:MM:SS or null>",
+      "why_it_hurts": "<retention/CTR impact with data>",
+      "fix": "<exact actionable instruction>",
+      "expected_impact": "<realistic improvement estimate>"
+    }}
+  ],
+  "timestamped_observations": [
+    {{"time": "<HH:MM:SS>", "observation": "<what happens>", "severity": "<critical/warning/ok>"}},
+    {{"time": "<HH:MM:SS>", "observation": "<what happens>", "severity": "<critical/warning/ok>"}}
+  ],
+  "ctr_prediction": "<will this get clicked — be direct with percentage estimate>",
+  "retention_prediction": "<predicted average view duration — specific>",
+  "virality_prediction": "<realistic viral ceiling for this content — be honest>",
+  "quick_wins": [
+    "<easy immediate fix that takes under 10 minutes>",
+    "<another quick win>"
+  ],
+  "high_priority_fixes": [
+    "<EXACT visual/audio/script instruction — not generic>",
+    "<another high priority fix with exact instruction>",
+    "<another>"
+  ],
+  "ten_improved_titles": [
+    "<rewritten title 1 — specific, curiosity-driven>",
+    "<title 2>",
+    "<title 3>",
+    "<title 4>",
+    "<title 5>",
+    "<title 6>",
+    "<title 7>",
+    "<title 8>",
+    "<title 9>",
+    "<title 10>"
+  ],
+  "five_thumbnail_concepts": [
+    "<concept 1: what to show, text overlay, colors, layout>",
+    "<concept 2>",
+    "<concept 3>",
+    "<concept 4>",
+    "<concept 5>"
+  ],
+  "content_team_checklist": [
+    "[ ] <checkbox item>",
+    "[ ] <another>",
+    "[ ] <another>",
+    "[ ] <another>"
+  ],
+  "final_verdict": "<harsh, honest 2-3 sentence summary — no softening>",
+  "rewritten_hook": "<word-for-word script for first 20 seconds + visual direction in brackets>"
+}}"""
+
+    r = _groq_call(client,
+        model=TEXT_MODEL,
+        messages=[{"role":"system","content":CRITIC_SYSTEM}, {"role":"user","content":prompt}],
+        max_tokens=3000, temperature=0.15,
+    )
+    result = _parse_json(r.choices[0].message.content)
+
+    # Enforce all Python-computed values — AI cannot override
+    result["overall_score"] = final_score
+    result["virality_score"] = final_score  # frontend compatibility
+    result["grade"] = grade
+    result["scores"] = {
+        "hook":      hook_10,
+        "story":     story_10,
+        "script":    script_10,
+        "audio":     audio_10,
+        "visual":    visual_10,
+        "editing":   editing_10,
+        "retention": retention_10,
+        "thumbnail": thumbnail_10,
+        "title":     title_dim_10,
+        "virality":  virality_10,
+    }
+    result["breakdown"] = {
+        "hook":      hook_10,
+        "story":     story_10,
+        "script":    script_10,
+        "audio":     audio_10,
+        "visual":    visual_10,
+        "editing":   editing_10,
+        "retention": retention_10,
+        "thumbnail": thumbnail_10,
+        "title":     title_dim_10,
+        "virality":  virality_10,
+    }
+    return result
 
 
 def analyze_uploaded_video(video_path: str) -> dict:
@@ -660,18 +821,36 @@ def analyze_uploaded_video(video_path: str) -> dict:
     # ── Step 3: Analyze each frame + audio-visual sync ──
     vision = _analyze_frame_sequence(frames, transcript, duration_sec, client)
 
-    # ── Step 4: Score everything in Python ──
-    hook_score   = _score_audio(sig)
-    audio_score  = hook_score
-    visual_score = vision["avg_visual"]
-    pacing       = _pacing_score(cut_count, duration_sec, sig["wpm"])
-    title_score  = 50
-    seo_score    = 50
+    # ── Step 4: Score all 10 dimensions in Python ──
+    hook_10     = _score_hook_10(sig)
+    story_10    = _score_story_10(transcript or "", sig)
+    script_10   = _score_script_10(sig)
+    audio_10    = _score_audio_10(sig)
 
-    content = _content_score(hook_score, audio_score, visual_score, title_score, seo_score)
-    unproven_perf = 25
-    final = max(2, min(98, round(unproven_perf * 0.60 + content * 0.40)))
-    grade = _grade(final)
+    # Visual from frame analysis (avg of sampled frames, converted /72 → /10)
+    avg_raw_visual = vision["avg_visual"]  # already 0-72
+    visual_10   = max(1, min(10, round(avg_raw_visual / 7.2)))
+
+    editing_10  = _score_editing_10(cut_count, duration_sec, sig["wpm"])
+
+    # Retention is predicted for upload mode (no real YouTube data)
+    retention_10 = _score_retention_predicted_10(hook_10, story_10, editing_10)
+
+    # Thumbnail from first frame
+    if frames:
+        first_frame_facts = _get_frame_facts(frames[0]["b64"], frames[0]["mime"], client)
+        thumbnail_10 = _score_thumbnail_10(first_frame_facts)
+    else:
+        first_frame_facts = {}
+        thumbnail_10 = 3
+
+    # Title/SEO — not available for upload, use neutral
+    title_dim_10 = 5
+    virality_10  = _score_virality_10(hook_10, story_10, visual_10, retention_10, editing_10)
+
+    final_score = hook_10 + story_10 + script_10 + audio_10 + visual_10 + editing_10 + retention_10 + thumbnail_10 + title_dim_10 + virality_10
+    final_score = max(1, min(100, final_score))
+    grade = _grade(final_score)
 
     cuts_per_min = round(cut_count / (duration_sec / 60), 1) if duration_sec > 0 else 0
 
@@ -699,62 +878,93 @@ OVERALL A/V SYNC: {vision['av_sync_verdict']}
 HIGH DROP-OFF RISK MOMENTS: {vision['high_risk_moments'] or 'None detected'}
 SYNC FAILURES: {vision['broken_sync_moments'] or 'None'}
 
-SCORES (do not change):
-Hook:{hook_score} | Visual:{visual_score} | Pacing:{pacing} | Content:{content} | Final:{final} ({grade})
+10 DIMENSION SCORES (do not change these):
+- Hook:      {hook_10}/10
+- Story:     {story_10}/10
+- Script:    {script_10}/10
+- Audio:     {audio_10}/10
+- Visual:    {visual_10}/10
+- Editing:   {editing_10}/10
+- Retention: {retention_10}/10 (predicted)
+- Thumbnail: {thumbnail_10}/10
+- Title:     {title_dim_10}/10
+- Virality:  {virality_10}/10
+TOTAL: {final_score}/100 ({grade})
 
 TRANSCRIPT (first 1200 chars):
 {transcript[:1200] if transcript else "NO AUDIO DETECTED"}
 
 Write a brutal, timestamped critique. Reference specific moments you observed.
 Name the exact second things go wrong. Do not invent positives.
+Every criticism must include: evidence, timestamp, why it hurts, fix, expected impact.
 
-Return JSON only:
+Return JSON only — include ALL fields:
 {{
-  "virality_score": {final},
+  "overall_score": {final_score},
   "grade": "{grade}",
-  "first_impression": "<what a cold viewer sees and hears in seconds 0-3 — be specific>",
-  "breakdown": {{
-    "hook_strength": {hook_score},
-    "visual_quality": {visual_score},
-    "engagement_signals": {unproven_perf},
-    "pacing": {pacing},
-    "content_depth": {content}
+  "confidence_level": "<High/Medium/Low>",
+  "executive_summary": "<2-3 sentence honest summary>",
+  "scores": {{
+    "hook": {hook_10},
+    "story": {story_10},
+    "script": {script_10},
+    "audio": {audio_10},
+    "visual": {visual_10},
+    "editing": {editing_10},
+    "retention": {retention_10},
+    "thumbnail": {thumbnail_10},
+    "title": {title_dim_10},
+    "virality": {virality_10}
   }},
+  "strengths": ["<only real strength, max 3>"],
+  "weaknesses": ["<weakness with specific evidence>"],
+  "critical_issues": [
+    {{
+      "issue": "<specific problem>",
+      "timestamp": "<HH:MM:SS or null>",
+      "why_it_hurts": "<impact>",
+      "fix": "<exact instruction>",
+      "expected_impact": "<realistic estimate>"
+    }}
+  ],
+  "timestamped_observations": [
+    {{"time": "<HH:MM:SS>", "observation": "<what happens>", "severity": "<critical/warning/ok>"}}
+  ],
+  "ctr_prediction": "<will this get clicked — direct>",
+  "retention_prediction": "<predicted average view duration>",
+  "virality_prediction": "<realistic viral ceiling>",
+  "quick_wins": ["<easy fix under 10 minutes>", "<another>"],
+  "high_priority_fixes": [
+    "<EXACT visual/audio/script instruction>",
+    "<another>",
+    "<another>"
+  ],
+  "ten_improved_titles": [
+    "<title 1>","<title 2>","<title 3>","<title 4>","<title 5>",
+    "<title 6>","<title 7>","<title 8>","<title 9>","<title 10>"
+  ],
+  "five_thumbnail_concepts": [
+    "<concept 1: what to show, text, colors, layout>",
+    "<concept 2>","<concept 3>","<concept 4>","<concept 5>"
+  ],
+  "content_team_checklist": [
+    "[ ] <checkbox item>","[ ] <another>","[ ] <another>","[ ] <another>"
+  ],
+  "final_verdict": "<harsh 2-3 sentence summary>",
+  "rewritten_hook": "<word-for-word first 20 seconds script + visual direction in brackets>",
   "video_watch_report": {{
     "worst_moment": "{vision['worst_segment']}",
     "av_sync_verdict": "{vision['av_sync_verdict']}",
-    "edit_pacing_verdict": "<{cuts_per_min} cuts/min — engaging or boring — what to change>",
-    "retention_curve": "<predict exact moments viewers drop off and why, based on what was observed>",
-    "segment_verdicts": [{{"label": "...", "problem": "..."}}]
+    "edit_pacing_verdict": "<{cuts_per_min} cuts/min — engaging or boring>",
+    "retention_curve": "<predict exact drop-off moments and why>"
   }},
   "audio_analysis": {{
-    "verdict": "<professional or amateurish — name specific problems heard>",
-    "transcript_summary": "<what was said in first 30 seconds>",
-    "filler_word_problem": "<{sig['filler_pct']}% fillers — exact impact on credibility>",
+    "verdict": "<professional or amateurish — specific>",
+    "filler_word_problem": "<{sig['filler_pct']}% fillers — exact impact>",
     "pacing_verdict": "<{sig['wpm']} wpm — effect on retention>",
-    "audio_visual_sync": "<full sync verdict with specific broken moments named>",
+    "audio_visual_sync": "<full sync verdict>",
     "script_quality": "<tight/rambling — what lines to cut>"
-  }},
-  "hook_analysis": {{
-    "verdict": "<did the first 3 seconds earn attention — be harsh>",
-    "what_top_creators_do_instead": "<how a top creator would open this video>",
-    "rewritten_opening": "<word-for-word replacement script for first 20 seconds>"
-  }},
-  "production_issues": ["<timestamped specific issue>", "<another>", "<another>"],
-  "optimization_tips": [
-    "<VISUAL FIX: exact shot/scene to add or reshoot — describe frame, angle, what must be visible>",
-    "<AUDIO FIX: exact script line to re-record — write the word-for-word replacement>",
-    "<EDIT FIX: specific cut at a named timestamp — describe exactly what replaces it>",
-    "<HOOK FIX: word-for-word first 15 seconds script + opening visual direction>",
-    "<PRODUCTION FIX: lighting, setup, or equipment change with exact instruction>"
-  ],
-  "production_script_notes": [
-    "<SCRIPT: exact spoken line that fails + word-for-word replacement>",
-    "<VISUAL DIRECTION: exact camera or B-roll instruction for editor>",
-    "<AUDIO DIRECTION: exact re-recording note for creator>"
-  ],
-  "viral_potential": "<Low/Medium/High/Very High>",
-  "estimated_improvement": "<realistic view count if all fixes applied — and why>"
+  }}
 }}"""
 
     hook_frame = frames[0] if frames else None
@@ -773,19 +983,38 @@ Return JSON only:
         model = TEXT_MODEL
 
     try:
-        r = _groq_call(client, model=model, messages=messages, max_tokens=2400, temperature=0.15)
+        r = _groq_call(client, model=model, messages=messages, max_tokens=3000, temperature=0.15)
         result = _parse_json(r.choices[0].message.content)
     except Exception:
         result = {}
 
-    result["virality_score"] = final
-    result["grade"] = grade
+    # Enforce all Python-computed values
+    result["overall_score"]  = final_score
+    result["virality_score"] = final_score  # frontend compatibility
+    result["grade"]          = grade
+    result["scores"] = {
+        "hook":      hook_10,
+        "story":     story_10,
+        "script":    script_10,
+        "audio":     audio_10,
+        "visual":    visual_10,
+        "editing":   editing_10,
+        "retention": retention_10,
+        "thumbnail": thumbnail_10,
+        "title":     title_dim_10,
+        "virality":  virality_10,
+    }
     result["breakdown"] = {
-        "hook_strength":      hook_score,
-        "visual_quality":     visual_score,
-        "engagement_signals": unproven_perf,
-        "pacing":             pacing,
-        "content_depth":      content,
+        "hook":      hook_10,
+        "story":     story_10,
+        "script":    script_10,
+        "audio":     audio_10,
+        "visual":    visual_10,
+        "editing":   editing_10,
+        "retention": retention_10,
+        "thumbnail": thumbnail_10,
+        "title":     title_dim_10,
+        "virality":  virality_10,
     }
     result["video_stats"] = {
         "duration_sec":    round(duration_sec),
@@ -797,12 +1026,11 @@ Return JSON only:
     }
     if "audio_analysis" not in result:
         result["audio_analysis"] = {
-            "verdict":          "Audio analysis unavailable",
-            "transcript_summary": transcript[:200] if transcript else "No audio detected",
+            "verdict":             "Audio analysis unavailable",
             "filler_word_problem": f"{sig['filler_pct']}% filler words",
-            "pacing_verdict":   f"{sig['wpm']} wpm",
-            "audio_visual_sync": vision["av_sync_verdict"],
-            "script_quality":   "Cannot assess",
+            "pacing_verdict":      f"{sig['wpm']} wpm",
+            "audio_visual_sync":   vision["av_sync_verdict"],
+            "script_quality":      "Cannot assess",
         }
     return result
 

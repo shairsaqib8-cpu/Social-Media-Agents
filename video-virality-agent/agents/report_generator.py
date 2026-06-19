@@ -84,13 +84,14 @@ def _add_info_row(doc: Document, label: str, value: str, value_color: RGBColor =
 def _score_bar_table(doc: Document, breakdown: dict):
     """Render score breakdown as a simple table."""
     labels = {
-        "hook_strength":      "Hook Strength",
-        "visual_quality":     "Visual Quality",
-        "title_power":        "Title Power",
-        "seo_strength":       "SEO Strength",
-        "engagement_signals": "Engagement",
-        "pacing":             "Edit Pacing",
-        "content_depth":      "Content Depth",
+        "hook": "Hook (0-30s)", "story": "Storytelling", "script": "Script Quality",
+        "audio": "Audio", "visual": "Visual", "editing": "Editing/Pacing",
+        "retention": "Audience Retention", "thumbnail": "Thumbnail CTR",
+        "title": "Title Strength", "virality": "Virality Potential",
+        # legacy keys
+        "hook_strength": "Hook", "visual_quality": "Visual Quality",
+        "title_power": "Title Power", "seo_strength": "SEO",
+        "engagement_signals": "Engagement", "pacing": "Pacing", "content_depth": "Depth",
     }
     rows = [(labels.get(k, k.replace("_"," ").title()), v)
             for k, v in breakdown.items() if isinstance(v, (int, float))]
@@ -111,18 +112,24 @@ def _score_bar_table(doc: Document, breakdown: dict):
         cell.paragraphs[0].runs[0].font.color.rgb = C_WHITE
 
     for i, (label, score) in enumerate(rows):
+        # scores can be /10 or /100 — normalise for display
+        score_int = int(score)
+        is_10 = score_int <= 10
+        display = f"{score_int}/10" if is_10 else f"{score_int}/100"
+        pct = score_int * 10 if is_10 else score_int
+        grade_color = _grade_color(pct)
+        verdict = ("Excellent" if pct >= 70 else "Average" if pct >= 50 else "Weak" if pct >= 35 else "Poor")
+
         row = table.rows[i + 1].cells
         row[0].text = label
         row[0].paragraphs[0].runs[0].font.size = Pt(9)
-        row[1].text = f"{score}/100"
+        row[1].text = display
         row[1].paragraphs[0].runs[0].font.size = Pt(9)
         row[1].paragraphs[0].runs[0].bold = True
-        row[1].paragraphs[0].runs[0].font.color.rgb = _grade_color(int(score))
-        grade = ("Excellent" if score >= 70 else "Average" if score >= 50
-                 else "Weak" if score >= 35 else "Poor")
-        row[2].text = grade
+        row[1].paragraphs[0].runs[0].font.color.rgb = grade_color
+        row[2].text = verdict
         row[2].paragraphs[0].runs[0].font.size = Pt(9)
-        row[2].paragraphs[0].runs[0].font.color.rgb = _grade_color(int(score))
+        row[2].paragraphs[0].runs[0].font.color.rgb = grade_color
 
     doc.add_paragraph()
 
@@ -200,10 +207,17 @@ def generate_report(data: dict, mode: str = "url") -> bytes:
         _add_info_row(doc, "Comments",  f"{meta.get('comment_count',0):,}")
         doc.add_paragraph()
 
+    if ca.get("confidence_level"):
+        cl = ca["confidence_level"]
+        clr = C_GREEN if cl=="High" else C_YELLOW if cl=="Medium" else C_RED
+        _add_info_row(doc, "Analysis Confidence", cl, clr)
+
+    if ca.get("executive_summary"):
+        p = doc.add_paragraph(ca["executive_summary"])
+        p.paragraph_format.space_after = Pt(8)
+
     if ca.get("performance_verdict"):
-        p = doc.add_paragraph()
-        p.add_run("Performance Verdict: ").bold = True
-        p.add_run(ca["performance_verdict"]).font.color.rgb = C_RED
+        _add_info_row(doc, "Performance Verdict", ca["performance_verdict"], C_RED)
 
     if ca.get("biggest_mistake"):
         p = doc.add_paragraph()
@@ -213,21 +227,27 @@ def generate_report(data: dict, mode: str = "url") -> bytes:
         r.bold = True
 
     if ca.get("first_impression"):
-        p = doc.add_paragraph()
-        p.add_run("First Impression (0-3s): ").bold = True
-        p.add_run(ca["first_impression"])
+        _add_info_row(doc, "First Impression (0-3s)", ca["first_impression"])
 
     if ca.get("viral_potential"):
-        p = doc.add_paragraph()
-        p.add_run("Viral Potential: ").bold = True
         vp = ca["viral_potential"]
         color = C_GREEN if "high" in vp.lower() else C_YELLOW if "medium" in vp.lower() else C_RED
-        p.add_run(vp).font.color.rgb = color
+        _add_info_row(doc, "Viral Potential", vp, color)
+
+    # Predictions
+    if any(ca.get(k) for k in ["ctr_prediction","retention_prediction","virality_prediction"]):
+        _add_heading(doc, "Predictions", level=2)
+        if ca.get("ctr_prediction"):        _add_info_row(doc, "CTR Prediction",       ca["ctr_prediction"])
+        if ca.get("retention_prediction"):   _add_info_row(doc, "Retention Prediction",  ca["retention_prediction"])
+        if ca.get("virality_prediction"):    _add_info_row(doc, "Virality Prediction",   ca["virality_prediction"])
+
+    if ca.get("final_verdict"):
+        _add_heading(doc, "Final Verdict", level=2)
+        p = doc.add_paragraph(ca["final_verdict"])
+        p.runs[0].font.color.rgb = C_RED
 
     if ca.get("if_reshot_today") or ca.get("estimated_improvement"):
-        p = doc.add_paragraph()
-        p.add_run("If Fixed Today: ").bold = True
-        p.add_run(ca.get("if_reshot_today") or ca.get("estimated_improvement", ""))
+        _add_info_row(doc, "If Fixed Today", ca.get("if_reshot_today") or ca.get("estimated_improvement",""))
 
     # ════════════════════════════════════════════════════════════
     # 2. SCORE BREAKDOWN
@@ -330,21 +350,84 @@ def generate_report(data: dict, mode: str = "url") -> bytes:
             p.runs[0].font.color.rgb = C_GREEN
 
     # ════════════════════════════════════════════════════════════
-    # 7. PRODUCTION SCRIPT NOTES
+    # 7. CRITICAL ISSUES (with timestamps)
+    # ════════════════════════════════════════════════════════════
+    if ca.get("critical_issues"):
+        _add_heading(doc, "7. Critical Issues")
+        doc.add_paragraph("Each issue includes evidence, timestamp, and exact fix:").runs[0].font.color.rgb = C_MUTED
+        for ci in ca["critical_issues"]:
+            if isinstance(ci, dict):
+                p = doc.add_paragraph()
+                p.paragraph_format.left_indent = Inches(0.2)
+                p.paragraph_format.space_before = Pt(6)
+                ts = f" @ {ci.get('timestamp','')}" if ci.get("timestamp") else ""
+                lbl = p.add_run(f"⚠  {ci.get('issue','?')}{ts}")
+                lbl.bold = True; lbl.font.color.rgb = C_RED; lbl.font.size = Pt(10)
+                if ci.get("why_it_hurts"):
+                    _add_bullet(doc, f"Why: {ci['why_it_hurts']}", C_MUTED, "  →")
+                if ci.get("fix"):
+                    _add_bullet(doc, f"Fix: {ci['fix']}", C_GREEN, "  ✅")
+                if ci.get("expected_impact"):
+                    _add_bullet(doc, f"Impact: {ci['expected_impact']}", C_PURPLE, "  📈")
+            else:
+                _add_bullet(doc, str(ci), C_RED, "⚠")
+
+    # ════════════════════════════════════════════════════════════
+    # 8. TIMESTAMPED OBSERVATIONS
+    # ════════════════════════════════════════════════════════════
+    if ca.get("timestamped_observations"):
+        _add_heading(doc, "8. Timestamped Observations")
+        for obs in ca["timestamped_observations"]:
+            if isinstance(obs, dict):
+                sev = obs.get("severity","ok")
+                clr = C_RED if sev=="critical" else C_YELLOW if sev=="warning" else C_GREEN
+                ico = "🔴" if sev=="critical" else "🟡" if sev=="warning" else "🟢"
+                _add_bullet(doc, f"[{obs.get('time','?')}] {obs.get('observation','')}", clr, ico)
+            else:
+                _add_bullet(doc, str(obs), C_MUTED, "•")
+
+    # ════════════════════════════════════════════════════════════
+    # 9. QUICK WINS & HIGH PRIORITY FIXES
+    # ════════════════════════════════════════════════════════════
+    if ca.get("quick_wins") or ca.get("high_priority_fixes"):
+        _add_heading(doc, "9. Action Plan")
+        if ca.get("quick_wins"):
+            _add_heading(doc, "Quick Wins (do these first)", level=2)
+            for w in ca["quick_wins"]:
+                _add_bullet(doc, w, C_GREEN, "⚡")
+        if ca.get("high_priority_fixes"):
+            _add_heading(doc, "High Priority Fixes", level=2)
+            for f in ca["high_priority_fixes"]:
+                _add_bullet(doc, f, C_RED, "🔧")
+
+    # ════════════════════════════════════════════════════════════
+    # 10. REWRITTEN HOOK SCRIPT
+    # ════════════════════════════════════════════════════════════
+    if ca.get("rewritten_hook"):
+        _add_heading(doc, "10. Rewritten Hook Script")
+        doc.add_paragraph("Hand this word-for-word to the creator:").runs[0].font.color.rgb = C_MUTED
+        p = doc.add_paragraph(ca["rewritten_hook"])
+        p.paragraph_format.left_indent = Inches(0.3)
+        if p.runs:
+            p.runs[0].font.color.rgb = C_GREEN
+            p.runs[0].italic = True
+
+    # ════════════════════════════════════════════════════════════
+    # 11. PRODUCTION SCRIPT NOTES
     # ════════════════════════════════════════════════════════════
     psn = ca.get("production_script_notes", [])
     if psn:
-        _add_heading(doc, "7. Production Script Notes")
+        _add_heading(doc, "11. Production Script Notes")
         doc.add_paragraph("Hand these directly to your scriptwriter and video editor:").runs[0].font.color.rgb = C_MUTED
         for note in psn:
             _add_bullet(doc, note, C_CYAN, "📝")
 
     # ════════════════════════════════════════════════════════════
-    # 8. OPTIMIZATION ROADMAP
+    # 12. OPTIMIZATION ROADMAP
     # ════════════════════════════════════════════════════════════
     tips = ca.get("optimization_tips", [])
     if tips:
-        _add_heading(doc, "8. Optimization Roadmap")
+        _add_heading(doc, "12. Optimization Roadmap")
         doc.add_paragraph("Priority order — fix these before re-uploading:").runs[0].font.color.rgb = C_MUTED
         doc.add_paragraph()
         for i, tip in enumerate(tips, 1):
@@ -360,11 +443,55 @@ def generate_report(data: dict, mode: str = "url") -> bytes:
         doc.add_paragraph()
 
     # ════════════════════════════════════════════════════════════
-    # 9. THUMBNAIL ANALYSIS
+    # 13. 10 IMPROVED TITLES
+    # ════════════════════════════════════════════════════════════
+    titles = ca.get("ten_improved_titles", [])
+    if titles:
+        _add_heading(doc, "13. 10 Improved Title Options")
+        doc.add_paragraph("Test these titles — ranked by predicted CTR potential:").runs[0].font.color.rgb = C_MUTED
+        for i, t in enumerate(titles, 1):
+            p = doc.add_paragraph()
+            p.paragraph_format.left_indent = Inches(0.2)
+            p.paragraph_format.space_after = Pt(4)
+            num = p.add_run(f"  {i:02d}.  ")
+            num.bold = True; num.font.color.rgb = C_PURPLE
+            body = p.add_run(str(t))
+            body.font.size = Pt(10)
+
+    # ════════════════════════════════════════════════════════════
+    # 14. 5 THUMBNAIL CONCEPTS
+    # ════════════════════════════════════════════════════════════
+    concepts = ca.get("five_thumbnail_concepts", []) or ta.get("five_thumbnail_concepts", [])
+    if concepts:
+        _add_heading(doc, "14. 5 Thumbnail Concepts")
+        doc.add_paragraph("Brief your designer with these — each describes layout, text, colors, and subject:").runs[0].font.color.rgb = C_MUTED
+        for i, c in enumerate(concepts, 1):
+            _add_heading(doc, f"Concept {i}", level=2)
+            p = doc.add_paragraph(str(c))
+            p.paragraph_format.left_indent = Inches(0.3)
+            if p.runs:
+                p.runs[0].font.color.rgb = C_CYAN
+
+    # ════════════════════════════════════════════════════════════
+    # 15. CONTENT TEAM CHECKLIST
+    # ════════════════════════════════════════════════════════════
+    checklist = ca.get("content_team_checklist", []) or ta.get("content_team_checklist", [])
+    if checklist:
+        _add_heading(doc, "15. Content Team Checklist")
+        doc.add_paragraph("Print this and check off each item before re-uploading:").runs[0].font.color.rgb = C_MUTED
+        for item in checklist:
+            p = doc.add_paragraph()
+            p.paragraph_format.left_indent = Inches(0.3)
+            p.paragraph_format.space_after = Pt(3)
+            p.add_run("☐  ").font.color.rgb = C_PURPLE
+            p.add_run(str(item)).font.size = Pt(10)
+
+    # ════════════════════════════════════════════════════════════
+    # 16. THUMBNAIL ANALYSIS
     # ════════════════════════════════════════════════════════════
     if ta:
-        _add_heading(doc, "9. Thumbnail Analysis")
-        _add_info_row(doc, "Thumbnail Score",  f"{ta.get('score','?')}/72", _grade_color(int(ta.get('score',0))))
+        _add_heading(doc, "16. Thumbnail Analysis")
+        _add_info_row(doc, "Thumbnail Score",  f"{ta.get('score','?')}/10", _grade_color(int(ta.get('score',0))*10))
         _add_info_row(doc, "CTR Potential",    ta.get("ctr_potential","?"))
         _add_info_row(doc, "CTR Verdict",      ta.get("ctr_verdict",""))
         if ta.get("weaknesses"):

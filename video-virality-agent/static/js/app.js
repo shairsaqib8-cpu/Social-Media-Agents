@@ -398,6 +398,19 @@ function renderContentAnalysis(data) {
   // Frame-by-frame watch report
   if (data.video_watch_report) html += renderWatchReport(data.video_watch_report);
 
+  // Executive summary
+  if (data.executive_summary) {
+    html += `<div class="sec-title">📋 Executive Summary</div>
+    <div class="hook-card"><div class="hook-verdict">${data.executive_summary}</div></div>`;
+  }
+
+  // Confidence level
+  if (data.confidence_level) {
+    const cl = data.confidence_level;
+    const clr = cl==='High'?'#43e97b':cl==='Medium'?'#f9ca24':'#ff4757';
+    html += `<div style="font-size:.8rem;margin-bottom:8px">Confidence: <b style="color:${clr}">${cl}</b></div>`;
+  }
+
   if (data.first_impression) {
     html += `<div class="sec-title">First Impression (0-3 seconds)</div>
     <div class="hook-card"><div class="hook-verdict">${data.first_impression}</div></div>`;
@@ -423,17 +436,107 @@ function renderContentAnalysis(data) {
     html += `</div>`;
   }
 
+  // Critical issues with timestamps
+  if (data.critical_issues?.length) {
+    html += `<div class="sec-title">🚨 Critical Issues</div>`;
+    data.critical_issues.forEach(ci => {
+      html += `<div style="background:rgba(255,71,87,.08);border:1px solid rgba(255,71,87,.3);border-radius:10px;padding:12px 14px;margin-bottom:10px;">
+        <div style="font-weight:700;color:#ff4757;margin-bottom:4px">${ci.issue || ci} ${ci.timestamp ? `<span style="font-size:.75rem;color:#888">@ ${ci.timestamp}</span>` : ''}</div>
+        ${ci.why_it_hurts ? `<div style="font-size:.8rem;color:#aaa;margin-bottom:4px">📉 ${ci.why_it_hurts}</div>` : ''}
+        ${ci.fix ? `<div style="font-size:.8rem;color:#43e97b">✅ Fix: ${ci.fix}</div>` : ''}
+        ${ci.expected_impact ? `<div style="font-size:.78rem;color:#6c63ff;margin-top:3px">📈 Impact: ${ci.expected_impact}</div>` : ''}
+      </div>`;
+    });
+  }
+
+  // Timestamped observations
+  if (data.timestamped_observations?.length) {
+    html += `<div class="sec-title">⏱ Timestamped Observations</div><div class="tip-list">`;
+    data.timestamped_observations.forEach(o => {
+      const sev = o.severity || 'ok';
+      const clr = sev==='critical'?'red':sev==='warning'?'yellow':'cyan';
+      const ico = sev==='critical'?'🔴':sev==='warning'?'🟡':'🟢';
+      html += `<div class="tip-item ${clr}">${ico} <b>${o.time||''}:</b> ${o.observation||o}</div>`;
+    });
+    html += `</div>`;
+  }
+
+  // Predictions row
+  if (data.ctr_prediction || data.retention_prediction || data.virality_prediction) {
+    html += `<div class="sec-title">📊 Predictions</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:12px">`;
+    if (data.ctr_prediction) html += `<div style="background:rgba(108,99,255,.1);border:1px solid rgba(108,99,255,.25);border-radius:10px;padding:10px"><div style="font-size:.72rem;color:#888;margin-bottom:4px">CTR PREDICTION</div><div style="font-size:.85rem">${data.ctr_prediction}</div></div>`;
+    if (data.retention_prediction) html += `<div style="background:rgba(249,202,36,.08);border:1px solid rgba(249,202,36,.25);border-radius:10px;padding:10px"><div style="font-size:.72rem;color:#888;margin-bottom:4px">RETENTION</div><div style="font-size:.85rem">${data.retention_prediction}</div></div>`;
+    if (data.virality_prediction) html += `<div style="background:rgba(67,233,123,.08);border:1px solid rgba(67,233,123,.25);border-radius:10px;padding:10px"><div style="font-size:.72rem;color:#888;margin-bottom:4px">VIRALITY</div><div style="font-size:.85rem">${data.virality_prediction}</div></div>`;
+    html += `</div>`;
+  }
+
   if (data.production_issues?.length) {
     html += `<div class="sec-title">Production Issues</div><div class="tip-list">${data.production_issues.map(i=>`<div class="tip-item red">⚠️ ${i}</div>`).join('')}</div>`;
   }
+
+  // Quick wins
+  if (data.quick_wins?.length) {
+    html += `<div class="sec-title">⚡ Quick Wins</div><div class="tip-list">${data.quick_wins.map(t=>`<div class="tip-item green">✅ ${t}</div>`).join('')}</div>`;
+  }
+
+  // High priority fixes
+  if (data.high_priority_fixes?.length) {
+    html += `<div class="sec-title">🔧 High Priority Fixes</div><div class="tip-list">${data.high_priority_fixes.map(t=>`<div class="tip-item red">🔴 ${t}</div>`).join('')}</div>`;
+  }
+
+  // Rewritten hook
+  if (data.rewritten_hook) {
+    html += `<div class="sec-title">✍️ Rewritten Hook Script</div>
+    <div class="hook-card" style="border-color:rgba(67,233,123,.4)">
+      <div style="font-size:.75rem;color:#43e97b;font-weight:700;margin-bottom:6px">WORD-FOR-WORD REPLACEMENT</div>
+      <div style="font-size:.88rem;line-height:1.6;color:#e0e0e0">${data.rewritten_hook}</div>
+    </div>`;
+  }
+
   if (ta.issues?.length) {
     html += `<div class="sec-title">Title Issues</div><div class="tip-list">${ta.issues.map(i=>`<div class="tip-item red">⚠️ ${i}</div>`).join('')}</div>`;
   }
-  if (ta.alternative_titles?.length) {
+
+  // 10 Improved Titles
+  if (data.ten_improved_titles?.length) {
+    html += `<div class="sec-title">🏆 10 Improved Titles</div><div class="alt-titles">`;
+    data.ten_improved_titles.forEach((t,i) => {
+      html += `<div class="alt-title"><span style="color:#6c63ff;font-weight:700;margin-right:8px">${i+1}.</span>${t}</div>`;
+    });
+    html += `</div>`;
+  } else if (ta.alternative_titles?.length) {
     html += `<div class="sec-title">Alternative Titles</div><div class="alt-titles">${ta.alternative_titles.map(t=>`<div class="alt-title">${t}</div>`).join('')}</div>`;
   }
+
+  // 5 Thumbnail Concepts
+  if (data.five_thumbnail_concepts?.length) {
+    html += `<div class="sec-title">🖼️ 5 Thumbnail Concepts</div><div class="tip-list">`;
+    data.five_thumbnail_concepts.forEach((c,i) => {
+      html += `<div class="tip-item cyan" style="padding:10px 14px;margin-bottom:6px"><b style="color:#6c63ff">Concept ${i+1}:</b> ${c}</div>`;
+    });
+    html += `</div>`;
+  }
+
+  // Content team checklist
+  if (data.content_team_checklist?.length) {
+    html += `<div class="sec-title">📋 Content Team Checklist</div><div class="tip-list">`;
+    data.content_team_checklist.forEach(item => {
+      html += `<div style="display:flex;align-items:flex-start;gap:10px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05)">
+        <input type="checkbox" style="margin-top:3px;accent-color:#6c63ff;flex-shrink:0">
+        <span style="font-size:.85rem">${item}</span>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
   if (data.optimization_tips?.length) {
     html += `<div class="sec-title">Optimization Tips</div><div class="tip-list">${data.optimization_tips.map(t=>`<div class="tip-item cyan">💡 ${t}</div>`).join('')}</div>`;
+  }
+
+  // Final verdict
+  if (data.final_verdict) {
+    html += `<div class="sec-title">⚖️ Final Verdict</div>
+    <div style="background:rgba(255,71,87,.06);border:2px solid rgba(255,71,87,.3);border-radius:12px;padding:16px;font-size:.88rem;line-height:1.6;color:#e0e0e0">${data.final_verdict}</div>`;
   }
 
   document.getElementById('content-content').innerHTML = html;
