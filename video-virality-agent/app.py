@@ -11,11 +11,13 @@ sys.path.insert(0, str(BASE_DIR))
 load_dotenv(BASE_DIR / ".env")
 
 from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
+
+from agents.report_generator import generate_report
 
 from agents.youtube_fetcher import (
     extract_video_id,
@@ -209,6 +211,34 @@ async def analyze_full(
 
     result["source"] = "full_analysis"
     return result
+
+
+# ── Report download ──────────────────────────────────────────────────────────
+
+@app.post("/api/report")
+async def download_report(request: Request):
+    """Accept analysis JSON, return a formatted .docx file."""
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    mode = data.get("source", "url")
+    try:
+        docx_bytes = generate_report(data, mode=mode)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {e}")
+
+    filename = "virality_report.docx"
+    if data.get("metadata", {}).get("title"):
+        safe = "".join(c for c in data["metadata"]["title"][:40] if c.isalnum() or c in " _-")
+        filename = f"report_{safe.strip()}.docx"
+
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 if __name__ == "__main__":

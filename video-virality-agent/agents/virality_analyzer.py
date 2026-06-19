@@ -21,14 +21,18 @@ from groq import Groq
 TEXT_MODEL   = "llama-3.1-8b-instant"
 VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
-CRITIC_SYSTEM = """You are a ruthless YouTube performance analyst. Real brands pay you to kill bad content before it ships.
+CRITIC_SYSTEM = """You are a ruthless YouTube performance analyst and production director. Brands pay you to kill bad content before it ships.
 
 RULES — never break them:
-- Be specific. Name the exact second, word, or visual that fails.
-- Do NOT use hedging language ("could", "might", "consider"). Say "change this", "cut this", "redo this".
-- Do NOT invent positives. If something is bad, say it is bad.
-- Your output goes directly to a production team who will act on it today.
-- The score has been computed from hard data. Your job is to EXPLAIN it — not to argue for a different number."""
+1. Be pixel-level specific. Name the exact second, word, or visual that fails.
+2. Do NOT use hedging language. Say "change this to X", "cut this line", "reshoot this scene".
+3. Do NOT invent positives. If something fails, say it fails and say what to replace it with.
+4. Every optimization tip must include:
+   - WHAT to add/change/remove
+   - EXACTLY what the new visual or audio should be (write the script line, describe the shot)
+   - WHY this specific change improves retention or CTR
+5. Write as if you are handing this to a video editor and scriptwriter who will act TODAY.
+6. The score has been computed from hard data. Your job is to EXPLAIN it and provide the EXACT FIX."""
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
@@ -434,7 +438,18 @@ Return JSON only:
     "description_verdict": "<is the description doing SEO work or wasted space?>",
     "description_rewrite": "<rewritten first 150 chars — keyword rich>"
   }},
-  "optimization_tips": ["<specific actionable fix>", "<fix 2>", "<fix 3>", "<fix 4>", "<fix 5>"],
+  "optimization_tips": [
+    "<VISUAL FIX: exact shot/scene to add or reshoot — describe the frame, angle, what should be visible>",
+    "<AUDIO FIX: exact script line to change or re-record — write the replacement word-for-word>",
+    "<EDIT FIX: specific cut, transition, or pacing change with exact timestamp>",
+    "<TITLE/SEO FIX: exact rewritten title or tag set to use instead>",
+    "<HOOK FIX: word-for-word first 15 seconds script + describe opening visual>"
+  ],
+  "production_script_notes": [
+    "<LINE 1: exact script line that must change and what to replace it with>",
+    "<LINE 2: another specific line>",
+    "<VISUAL DIRECTION 1: exact B-roll or camera instruction>"
+  ],
   "viral_potential": "<Low/Medium/High/Very High>",
   "if_reshot_today": "<realistic view count if ALL fixes applied — and exactly why>"
 }}"""
@@ -726,7 +741,18 @@ Return JSON only:
     "rewritten_opening": "<word-for-word replacement script for first 20 seconds>"
   }},
   "production_issues": ["<timestamped specific issue>", "<another>", "<another>"],
-  "optimization_tips": ["<fix 1>", "<fix 2>", "<fix 3>", "<fix 4>", "<fix 5>"],
+  "optimization_tips": [
+    "<VISUAL FIX: exact shot/scene to add or reshoot — describe frame, angle, what must be visible>",
+    "<AUDIO FIX: exact script line to re-record — write the word-for-word replacement>",
+    "<EDIT FIX: specific cut at a named timestamp — describe exactly what replaces it>",
+    "<HOOK FIX: word-for-word first 15 seconds script + opening visual direction>",
+    "<PRODUCTION FIX: lighting, setup, or equipment change with exact instruction>"
+  ],
+  "production_script_notes": [
+    "<SCRIPT: exact spoken line that fails + word-for-word replacement>",
+    "<VISUAL DIRECTION: exact camera or B-roll instruction for editor>",
+    "<AUDIO DIRECTION: exact re-recording note for creator>"
+  ],
   "viral_potential": "<Low/Medium/High/Very High>",
   "estimated_improvement": "<realistic view count if all fixes applied — and why>"
 }}"""

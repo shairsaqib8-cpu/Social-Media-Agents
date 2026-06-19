@@ -154,6 +154,40 @@ function showResults() {
   document.getElementById('results').style.gap = '20px';
 }
 
+// ── Download DOCX report ──────────────────────────────────────────────────────
+let _lastAnalysisData = null;
+
+async function downloadReport() {
+  if (!_lastAnalysisData) return showError('Run an analysis first.');
+  const btn = document.getElementById('download-btn');
+  if (btn) { btn.textContent = '⏳ Generating…'; btn.disabled = true; }
+  try {
+    const res = await fetch('/api/report', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(_lastAnalysisData),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Report generation failed');
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const cd = res.headers.get('Content-Disposition') || '';
+    const match = cd.match(/filename="?([^"]+)"?/);
+    a.download = match ? match[1] : 'virality_report.docx';
+    a.href = url;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch(e) { showError(e.message); }
+  finally {
+    if (btn) { btn.textContent = '📄 Download Report'; btn.disabled = false; }
+  }
+}
+
 // ── Error toast ───────────────────────────────────────────────────────────────
 function showError(msg) {
   hideLoader();
@@ -459,6 +493,29 @@ function renderCompetitors(analysis, competitors) {
   document.getElementById('competitor-content').innerHTML = html;
 }
 
+// ── Show download button ───────────────────────────────────────────────────────
+function showDownloadBtn() {
+  let btn = document.getElementById('download-btn');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.id = 'download-btn';
+    btn.onclick = downloadReport;
+    btn.style.cssText = [
+      'display:flex','align-items:center','gap:8px','margin:0 auto',
+      'padding:12px 28px','background:linear-gradient(135deg,#6c63ff,#a855f7)',
+      'color:#fff','border:none','border-radius:10px','font-size:.95rem',
+      'font-weight:700','cursor:pointer','box-shadow:0 4px 20px rgba(108,99,255,.4)',
+      'transition:transform .15s,box-shadow .15s',
+    ].join(';');
+    btn.onmouseenter = () => { btn.style.transform='translateY(-2px)'; btn.style.boxShadow='0 6px 28px rgba(108,99,255,.6)'; };
+    btn.onmouseleave = () => { btn.style.transform=''; btn.style.boxShadow='0 4px 20px rgba(108,99,255,.4)'; };
+    const results = document.getElementById('results');
+    results.appendChild(btn);
+  }
+  btn.innerHTML = '📄 Download Full Report (DOCX)';
+  btn.style.display = 'flex';
+}
+
 // ── API calls ─────────────────────────────────────────────────────────────────
 async function analyzeURL() {
   const url = document.getElementById('yt-url').value.trim();
@@ -472,6 +529,7 @@ async function analyzeURL() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Analysis failed');
+    _lastAnalysisData = data;
     hideLoader(); showResults();
     const ca = data.content_analysis || {};
     renderScoreRing(ca.virality_score, ca.grade, ca.viral_potential, ca.estimated_improvement);
@@ -480,6 +538,7 @@ async function analyzeURL() {
     renderContentAnalysis(ca);
     if (ca.seo_recommendations) renderSEO(ca.seo_recommendations);
     renderCompetitors(data.competitor_analysis, data.competitors);
+    showDownloadBtn();
     document.getElementById('score-card').scrollIntoView({behavior:'smooth', block:'start'});
   } catch(e) { showError(e.message); }
 }
@@ -495,6 +554,7 @@ async function analyzeThumbnail() {
     if (!res.ok) throw new Error(data.detail || 'Thumbnail analysis failed');
     hideLoader(); showResults();
     const ta = data.thumbnail_analysis;
+    _lastAnalysisData = data;
     // Clear stale breakdown bars from any previous URL/video analysis
     document.getElementById('breakdown-bars').innerHTML = '';
     renderScoreRing(ta.score, ta.grade, ta.ctr_potential + ' CTR', null);
@@ -504,6 +564,7 @@ async function analyzeThumbnail() {
       const el = document.getElementById(id);
       if (el) el.style.display = 'none';
     });
+    showDownloadBtn();
     document.getElementById('score-card').scrollIntoView({behavior:'smooth', block:'start'});
   } catch(e) { showError(e.message); }
 }
@@ -518,10 +579,12 @@ async function analyzeVideo() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Video analysis failed');
     hideLoader(); showResults();
+    _lastAnalysisData = data;
     const va = data.video_analysis;
     renderScoreRing(va.virality_score, va.grade, va.viral_potential, va.estimated_improvement);
     if (va.breakdown) renderBreakdown(va.breakdown);
     renderContentAnalysis(va);
+    showDownloadBtn();
     document.getElementById('score-card').scrollIntoView({behavior:'smooth', block:'start'});
   } catch(e) { showError(e.message); }
 }
@@ -538,6 +601,7 @@ async function analyzeFull() {
     const res = await fetch('/api/analyze-full', {method:'POST', body:fd});
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Full analysis failed');
+    _lastAnalysisData = data;
     hideLoader(); showResults();
     const ca = data.content_analysis || {};
     if (ca.virality_score != null)
@@ -548,6 +612,7 @@ async function analyzeFull() {
     if (Object.keys(ca).length) renderContentAnalysis(ca);
     if (ca.seo_recommendations) renderSEO(ca.seo_recommendations);
     renderCompetitors(data.competitor_analysis, data.competitors);
+    showDownloadBtn();
     document.getElementById('score-card').scrollIntoView({behavior:'smooth', block:'start'});
   } catch(e) { showError(e.message); }
 }
