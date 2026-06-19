@@ -29,6 +29,7 @@ from agents.virality_analyzer import (
     analyze_thumbnail,
     analyze_video_content,
     analyze_uploaded_video,
+    analyze_post_timing,
     compare_competitors,
 )
 
@@ -62,6 +63,23 @@ def _save_upload(file: UploadFile, allowed: set[str]) -> Path:
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
+
+@app.get("/hub", response_class=HTMLResponse)
+async def hub(request: Request):
+    return templates.TemplateResponse("hub.html", {"request": request})
+
+@app.get("/api/agent-status")
+async def agent_status():
+    import socket
+    results = {}
+    for name, port in [("research", 8000), ("optimizer", 8003), ("virality", 8004), ("script", 8005)]:
+        try:
+            s = socket.create_connection(("127.0.0.1", port), timeout=1)
+            s.close()
+            results[name] = "online"
+        except Exception:
+            results[name] = "offline"
+    return JSONResponse(results)
 
 
 # ── YouTube URL analysis ─────────────────────────────────────────────────────
@@ -239,6 +257,21 @@ async def download_report(request: Request):
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ── Post timing analysis (screenshot upload) ─────────────────────────────────
+
+@app.post("/api/analyze-post-timing")
+async def analyze_post_timing_endpoint(file: UploadFile = File(...)):
+    path = _save_upload(file, ALLOWED_IMAGE)
+    try:
+        result = analyze_post_timing(str(path))
+    except Exception as e:
+        path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        path.unlink(missing_ok=True)
+    return {"source": "post_timing", "timing_analysis": result}
 
 
 if __name__ == "__main__":

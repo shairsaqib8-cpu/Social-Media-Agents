@@ -72,29 +72,66 @@ def fetch_transcript(video_id: str) -> str:
 
 
 def fetch_competitor_videos(query: str, exclude_id: str = "", max_results: int = 5) -> list[dict]:
+    from datetime import datetime, timezone, timedelta
     api_key = os.getenv("YOUTUBE_API_KEY", "")
     if not api_key:
         return []
+
+    # weekly trending only — videos older than 7 days excluded
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
     url = (
         f"https://www.googleapis.com/youtube/v3/search"
         f"?part=snippet&type=video&q={requests.utils.quote(query)}"
-        f"&maxResults=10&order=viewCount&key={api_key}"
+        f"&maxResults=10&order=viewCount"
+        f"&publishedAfter={cutoff}"
+        f"&key={api_key}"
     )
     r = requests.get(url, timeout=10)
     if not r.ok:
         return []
     items = r.json().get("items", [])
-    results = []
+
+    # Collect video IDs first so we can batch-fetch stats
+    candidate_ids = []
+    candidate_map = {}
     for item in items:
         vid_id = item["id"].get("videoId", "")
-        if vid_id == exclude_id:
+        if vid_id == exclude_id or not vid_id:
             continue
-        results.append({
+        candidate_ids.append(vid_id)
+        candidate_map[vid_id] = {
             "video_id": vid_id,
             "title": item["snippet"]["title"],
             "channel": item["snippet"]["channelTitle"],
             "thumbnail": item["snippet"]["thumbnails"].get("high", {}).get("url", ""),
-        })
-        if len(results) >= max_results:
+            "youtube_url": f"https://www.youtube.com/watch?v={vid_id}",
+            "view_count": 0,
+            "published_at": item["snippet"].get("publishedAt", ""),
+        }
+        if len(candidate_ids) >= max_results:
             break
-    return results
+
+    # Batch fetch view counts and published dates from videos API
+    if candidate_ids:
+        stats_url = (
+            f"https://www.googleapis.com/youtube/v3/videos"
+            f"?part=statistics,snippet&id={','.join(candidate_ids)}&key={api_key}"
+        )
+        try:
+            sr = requests.get(stats_url, timeout=10)
+            if sr.ok:
+                for sv in sr.json().get("items", []):
+                    vid_id = sv["id"]
+                    if vid_id in candidate_map:
+                        candidate_map[vid_id]["view_count"] = int(
+                            sv.get("statistics", {}).get("viewCount", 0)
+                        )
+                        candidate_map[vid_id]["published_at"] = (
+                            sv.get("snippet", {}).get("publishedAt",
+                            candidate_map[vid_id]["published_at"])
+                        )
+        except Exception:
+            pass  # keep defaults if stats fetch fails
+
+    return list(candidate_map.values())

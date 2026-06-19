@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Script Optimizer — AI Script Coach</title>
+  <link rel="stylesheet" href="/static/css/style.css?v=1" />
+</head>
+<body>
+<canvas id="bg"></canvas>
+
+<header>
+  <a class="hub-back" href="http://localhost:8004/hub">← Hub</a>
+  <div class="logo">
+    <div class="logo-icon">✍️</div>
+    <span class="logo-text">Script Optimizer</span>
+  </div>
+  <p>AI script coach — hooks, storytelling, connectivity, style & 12-dimension scoring</p>
+</header>
+
+<main>
+
+  <!-- Input -->
+  <div class="input-card">
+    <h2>✍️ Paste Your Script</h2>
+    <div class="meta-row">
+      <div class="field">
+        <label>Video Title (optional)</label>
+        <input id="title-input" type="text" placeholder="e.g. How I Lost 10kg in 30 Days" />
+      </div>
+      <div class="field">
+        <label>Target Audience</label>
+        <input id="audience-input" type="text" placeholder="e.g. fitness beginners 18-35" />
+      </div>
+      <div class="field">
+        <label>Niche / Topic</label>
+        <input id="niche-input" type="text" placeholder="e.g. fitness, tech, finance" />
+      </div>
+    </div>
+    <div class="field script-field">
+      <label>Your Script</label>
+      <textarea id="script-input" placeholder="Paste your full YouTube script here...&#10;&#10;The more complete the script, the more accurate the analysis."></textarea>
+      <div class="char-count" id="char-count">0 words</div>
+    </div>
+    <button class="btn-analyze" onclick="analyze()">🔍 Analyze Script →</button>
+  </div>
+
+  <!-- Loader -->
+  <div class="loader" id="loader">
+    <div class="loader-spinner"></div>
+    <div class="loader-text">Analyzing your script…</div>
+    <div class="loader-sub">22 dimensions · hook · storytelling · style · pacing</div>
+    <div class="loader-steps">
+      <div class="loader-step active" id="step-1">📡 Parsing structure</div>
+      <div class="loader-step" id="step-2">🧠 AI deep analysis</div>
+      <div class="loader-step" id="step-3">🔍 Scoring 12 dims</div>
+      <div class="loader-step" id="step-4">✨ Building report</div>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div id="results">
+
+    <!-- Score Hero -->
+    <div class="score-hero">
+      <div class="ring-wrap">
+        <svg class="score-ring" viewBox="0 0 130 130" xmlns="http://www.w3.org/2000/svg">
+          <circle class="ring-bg"   cx="65" cy="65" r="58"/>
+          <circle class="ring-glow" id="ring-glow" cx="65" cy="65" r="58"/>
+          <circle class="ring-fill" id="ring-fill" cx="65" cy="65" r="58"/>
+        </svg>
+        <div class="ring-center">
+          <span class="ring-num" id="score-num">—</span>
+          <span class="ring-label">/ 100</span>
+        </div>
+      </div>
+      <div class="score-info">
+        <div class="score-title">Script Score</div>
+        <div class="grade-badge" id="score-grade">—</div>
+        <div id="score-tag" class="score-meta" style="margin-top:4px;"></div>
+        <div class="breakdown-grid" id="breakdown-grid" style="margin-top:12px;"></div>
+      </div>
+    </div>
+
+    <!-- Stats strip -->
+    <div class="stats-row">
+      <div class="stat-box"><div class="stat-val" id="stat-words">—</div><div class="stat-label">Words</div></div>
+      <div class="stat-box"><div class="stat-val" id="stat-duration">—</div><div class="stat-label">Est. Duration</div></div>
+      <div class="stat-box"><div class="stat-val" style="font-size:.95rem;" id="stat-hook">—</div><div class="stat-label">Hook Type</div></div>
+      <div class="stat-box"><div class="stat-val" style="font-size:.95rem;" id="stat-framework">—</div><div class="stat-label">Story Framework</div></div>
+    </div>
+
+    <!-- Hook Analysis -->
+    <div class="section-card">
+      <h2><div class="icon-badge" style="background:rgba(239,68,68,.15);">🎣</div> Hook Analysis</h2>
+      <div id="hook-verdict" class="verdict-box" style="margin-bottom:14px;"></div>
+      <h3 style="font-size:.82rem;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px;">Rewritten Hook</h3>
+      <div class="verdict-box green" id="hook-rewrite" style="margin-bottom:16px;font-size:.87rem;line-height:1.75;"></div>
+      <h3 style="font-size:.82rem;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px;">5 Alternative Hooks</h3>
+      <div class="hook-list" id="hook-alts"></div>
+    </div>
+
+    <!-- Storytelling Arc -->
+    <div class="section-card">
+      <h2><div class="icon-badge" style="background:rgba(6,182,212,.15);">📖</div> Storytelling Arc</h2>
+      <div class="arc-row" id="arc-row"></div>
+      <div class="divider"></div>
+      <div style="margin-top:12px;">
+        <div style="font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Storytelling Verdict</div>
+        <div class="verdict-box" id="story-verdict" style="font-size:.87rem;margin-bottom:12px;"></div>
+        <div style="font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Emotional Journey</div>
+        <div class="verdict-box" id="emotional-journey" style="font-size:.85rem;margin-bottom:12px;"></div>
+        <div style="font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Arc Fix</div>
+        <div class="verdict-box red" id="arc-fix" style="font-size:.85rem;"></div>
+      </div>
+    </div>
+
+    <!-- Connectivity -->
+    <div class="section-card">
+      <h2><div class="icon-badge" style="background:rgba(245,158,11,.15);">🔗</div> Connectivity & Flow</h2>
+      <div class="verdict-box yellow" id="conn-verdict" style="margin-bottom:16px;font-size:.87rem;"></div>
+
+      <h3 style="font-size:.82rem;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">Weak Transitions</h3>
+      <div id="weak-transitions" style="margin-bottom:16px;"></div>
+
+      <h3 style="font-size:.82rem;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">Open Loops Found</h3>
+      <div class="chip-row" id="open-loops-found" style="margin-bottom:8px;"></div>
+      <div style="font-size:.75rem;color:var(--muted);margin-bottom:4px;">Missing loop — add this:</div>
+      <div class="verdict-box" id="missing-loop" style="font-size:.85rem;margin-bottom:16px;"></div>
+
+      <h3 style="font-size:.82rem;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">Pattern Interrupts Found</h3>
+      <div class="chip-row" id="pi-found" style="margin-bottom:8px;"></div>
+      <div style="font-size:.75rem;color:var(--muted);margin-bottom:4px;">Missing interrupt — add this:</div>
+      <div class="verdict-box" id="missing-pi" style="font-size:.85rem;margin-bottom:16px;"></div>
+
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+        <h3 style="font-size:.82rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Re-Hook (40-60% mark)</h3>
+        <span id="rehook-status"></span>
+      </div>
+      <div style="font-size:.75rem;color:var(--muted);margin-bottom:4px;">Current re-hook:</div>
+      <div class="verdict-box" id="rehook-location" style="font-size:.85rem;margin-bottom:8px;"></div>
+      <div style="font-size:.75rem;color:var(--muted);margin-bottom:4px;">Suggested re-hook line:</div>
+      <div class="verdict-box green" id="rehook-fix" style="font-size:.85rem;"></div>
+    </div>
+
+    <!-- Style & Pacing -->
+    <div class="section-card">
+      <h2><div class="icon-badge" style="background:rgba(168,85,247,.15);">🎨</div> Style, Voice & Pacing</h2>
+      <div class="verdict-box" id="style-verdict" style="margin-bottom:14px;font-size:.87rem;"></div>
+
+      <h3 style="font-size:.82rem;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">Line-by-Line Style Fixes</h3>
+      <div id="style-issues" style="margin-bottom:16px;"></div>
+
+      <h3 style="font-size:.82rem;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">Pacing</h3>
+      <div class="verdict-box yellow" id="pacing-verdict" style="font-size:.87rem;margin-bottom:10px;"></div>
+      <div class="bullet-list" id="pacing-fixes" style="margin-bottom:16px;"></div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div>
+          <div style="font-size:.75rem;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px;">Power Words Used</div>
+          <div class="chip-row" id="power-used"></div>
+        </div>
+        <div>
+          <div style="font-size:.75rem;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px;">Suggested Power Words</div>
+          <div class="chip-row" id="power-missing"></div>
+        </div>
+      </div>
+
+      <div class="divider" style="margin:14px 0;"></div>
+      <h3 style="font-size:.82rem;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">Specificity Fixes</h3>
+      <div id="spec-issues"></div>
+    </div>
+
+    <!-- Emotional & Stakes -->
+    <div class="section-card">
+      <h2><div class="icon-badge" style="background:rgba(239,68,68,.15);">❤️</div> Emotional Engagement & Stakes</h2>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+        <div style="font-size:.8rem;color:var(--muted);">Emotional Arc:</div>
+        <div id="emo-score"></div>
+      </div>
+      <div class="verdict-box" id="emo-verdict" style="font-size:.87rem;margin-bottom:14px;"></div>
+
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+        <div style="font-size:.8rem;color:var(--muted);">Stakes Clarity:</div>
+        <div id="stakes-badge"></div>
+      </div>
+      <div style="font-size:.75rem;color:var(--muted);margin-bottom:4px;">Add this stakes line in first 30 seconds:</div>
+      <div class="verdict-box red" id="stakes-fix" style="font-size:.85rem;margin-bottom:14px;"></div>
+
+      <h3 style="font-size:.82rem;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px;">CTA Analysis</h3>
+      <div class="verdict-box yellow" id="cta-verdict" style="font-size:.87rem;margin-bottom:8px;"></div>
+      <div class="verdict-box green" id="cta-fix" style="font-size:.85rem;"></div>
+    </div>
+
+    <!-- Critical Issues & Quick Wins -->
+    <div class="section-card">
+      <h2><div class="icon-badge" style="background:rgba(239,68,68,.15);">🔴</div> Critical Issues</h2>
+      <div class="bullet-list" id="critical-list"></div>
+    </div>
+
+    <div class="section-card">
+      <h2><div class="icon-badge" style="background:rgba(16,185,129,.15);">⚡</div> Quick Wins</h2>
+      <div class="bullet-list" id="quickwins-list"></div>
+    </div>
+
+    <!-- Full Rewritten Script -->
+    <div class="section-card">
+      <h2><div class="icon-badge" style="background:rgba(168,85,247,.15);">📝</div> Full Rewritten Script</h2>
+      <p style="font-size:.8rem;color:var(--muted);margin-bottom:12px;">Complete rewrite applying all fixes — <span style="color:var(--cyan);">[visual cues in brackets]</span> — hand this to your editor today.</p>
+      <div class="rewrite-box" id="rewrite-content"></div>
+    </div>
+
+    <!-- Title Suggestions -->
+    <div class="section-card">
+      <h2><div class="icon-badge" style="background:rgba(245,158,11,.15);">🏆</div> Optimized Title Suggestions</h2>
+      <div class="title-list" id="titles-list"></div>
+    </div>
+
+    <!-- Overall Verdict -->
+    <div class="section-card">
+      <h2><div class="icon-badge" style="background:rgba(168,85,247,.15);">🎯</div> Overall Verdict</h2>
+      <div class="verdict-box" id="overall-verdict" style="font-size:.92rem;line-height:1.8;"></div>
+    </div>
+
+  </div><!-- /results -->
+</main>
+
+<div id="copy-toast">Copied!</div>
+<script src="/static/js/app.js?v=1"></script>
+</body>
+</html>

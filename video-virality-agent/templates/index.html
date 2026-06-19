@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Video Virality Analyzer</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=3" />
+  <link rel="stylesheet" href="/static/css/style.css?v=8" />
 </head>
 <body>
 
@@ -15,6 +15,7 @@
     <div class="logo-icon">🎬</div>
     <span class="logo-text">Virality Analyzer</span>
   </div>
+  <a href="/hub" class="hub-link">🤖 Agent Hub</a>
   <p class="tagline">Drop your content. Get the <span>viral formula</span>. Beat the algorithm.</p>
   <div class="header-pills">
     <div class="pill"><span class="dot"></span> AI-Powered Analysis</div>
@@ -33,6 +34,7 @@
       <button class="tab" data-tab="thumbnail"><span class="tab-emoji">🖼</span> Thumbnail</button>
       <button class="tab" data-tab="video"><span class="tab-emoji">📹</span> Video Upload</button>
       <button class="tab" data-tab="full"><span class="tab-emoji">⚡</span> Full Analysis</button>
+      <button class="tab" data-tab="post"><span class="tab-emoji">📸</span> Post Optimizer</button>
     </div>
 
     <!-- YouTube URL -->
@@ -80,6 +82,24 @@
       <button class="btn-primary" style="margin-top:16px;" onclick="analyzeVideo()">Analyze Video →</button>
     </div>
 
+    <!-- Post Optimizer -->
+    <div class="tab-content" id="tab-post">
+      <p class="hint">Upload a screenshot of your YouTube Analytics dashboard — we'll read your audience data and tell you the exact best time to post.</p>
+      <div class="upload-zone" id="post-zone" onclick="document.getElementById('post-file').click()">
+        <div class="upload-icon-wrap" style="background:rgba(249,202,36,.1);">📸</div>
+        <p>Click or drag & drop your Analytics screenshot</p>
+        <p class="sub">We'll read the audience heatmap and give you a posting schedule</p>
+        <div class="file-badge">
+          <span>JPG</span><span>PNG</span><span>WEBP</span>
+        </div>
+        <input type="file" id="post-file" accept=".jpg,.jpeg,.png,.webp" hidden onchange="previewPost(this)" />
+      </div>
+      <div class="thumb-preview-wrap" id="post-preview-wrap">
+        <img id="post-preview" src="" alt="Analytics screenshot preview" />
+      </div>
+      <button class="btn-primary" style="margin-top:16px;" onclick="analyzePostTiming()">Analyze &amp; Get Best Upload Time →</button>
+    </div>
+
     <!-- Full Analysis -->
     <div class="tab-content" id="tab-full">
       <p class="hint">The most complete audit — combine a YouTube URL with your own custom thumbnail for side-by-side virality scoring, SEO, and competitor breakdown.</p>
@@ -113,6 +133,14 @@
 
   <!-- ── Results ── -->
   <div id="results" style="display:none;">
+
+    <!-- Download Bar -->
+    <div class="download-bar" id="download-bar" style="display:none;">
+      <div class="download-bar-inner">
+        <span class="download-bar-label">📊 Analysis Complete — Ready for your team</span>
+        <button id="download-btn" class="download-bar-btn" onclick="downloadReport()">📄 Download Full Report (DOCX)</button>
+      </div>
+    </div>
 
     <!-- Score Hero -->
     <div class="score-hero" id="score-card" style="display:none;">
@@ -170,11 +198,17 @@
       <div id="competitor-content"></div>
     </div>
 
+    <!-- Post Timing -->
+    <div class="card" id="post-card" style="display:none;">
+      <h2><div class="icon-badge" style="background:rgba(249,202,36,.15);">📸</div> Best Upload Time Analysis</h2>
+      <div id="post-content"></div>
+    </div>
+
   </div>
 </main>
 
 <div id="error-toast"></div>
 
-<script src="/static/js/app.js"></script>
+<script src="/static/js/app.js?v=8"></script>
 </body>
 </html>

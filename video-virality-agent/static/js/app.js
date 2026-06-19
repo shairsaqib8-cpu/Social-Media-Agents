@@ -83,20 +83,21 @@ document.querySelectorAll('.tab').forEach(btn => {
 });
 
 // ── Drag & drop ───────────────────────────────────────────────────────────────
-['thumb-zone', 'video-zone'].forEach(id => {
+['thumb-zone', 'video-zone', 'post-zone'].forEach(id => {
   const zone = document.getElementById(id);
   if (!zone) return;
   zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
   zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
   zone.addEventListener('drop', e => {
     e.preventDefault(); zone.classList.remove('drag-over');
-    const inputId = id === 'thumb-zone' ? 'thumb-file' : 'video-file';
+    const inputId = id === 'thumb-zone' ? 'thumb-file' : id === 'post-zone' ? 'post-file' : 'video-file';
     const input = document.getElementById(inputId);
     if (e.dataTransfer.files.length) {
       const dt = new DataTransfer();
       dt.items.add(e.dataTransfer.files[0]);
       input.files = dt.files;
       if (id === 'thumb-zone') previewThumb(input);
+      else if (id === 'post-zone') previewPost(input);
       else updateVideoZone(input);
     }
   });
@@ -115,6 +116,15 @@ function updateVideoZone(input) {
   const file = input.files[0];
   if (!file) return;
   document.querySelector('#video-zone p').textContent = '✅ ' + file.name;
+}
+
+function previewPost(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const img = document.getElementById('post-preview');
+  img.src = URL.createObjectURL(file);
+  document.getElementById('post-preview-wrap').style.display = 'flex';
+  document.querySelector('#post-zone p').textContent = file.name;
 }
 
 // ── Loader ────────────────────────────────────────────────────────────────────
@@ -144,7 +154,7 @@ function hideLoader() {
 
 function hideResults() {
   document.getElementById('results').style.display = 'none';
-  ['score-card','meta-card','thumb-card','content-card','seo-card','competitor-card']
+  ['score-card','meta-card','thumb-card','content-card','seo-card','competitor-card','post-card']
     .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
 }
 
@@ -255,22 +265,55 @@ function renderScoreRing(score, grade, potential, improvement) {
 function renderBreakdown(breakdown) {
   const wrap = document.getElementById('breakdown-bars');
   wrap.innerHTML = '';
-  const labels = {
-    hook_strength: 'Hook', title_power: 'Title', seo_strength: 'SEO',
-    engagement_signals: 'Engagement', content_depth: 'Depth',
-    visual_quality: 'Visual', pacing: 'Pacing',
+  const meta = {
+    hook:      { label: 'Hook',      icon: '🎣' },
+    story:     { label: 'Story',     icon: '📖' },
+    script:    { label: 'Script',    icon: '✍️' },
+    audio:     { label: 'Audio',     icon: '🎙️' },
+    visual:    { label: 'Visual',    icon: '🎨' },
+    editing:   { label: 'Editing',   icon: '✂️' },
+    retention: { label: 'Retention', icon: '📈' },
+    thumbnail: { label: 'Thumbnail', icon: '🖼️' },
+    title:     { label: 'Title',     icon: '📝' },
+    virality:  { label: 'Virality',  icon: '🚀' },
+    // legacy keys
+    hook_strength: { label: 'Hook', icon: '🎣' },
+    title_power: { label: 'Title', icon: '📝' },
+    seo_strength: { label: 'SEO', icon: '🔍' },
+    engagement_signals: { label: 'Engagement', icon: '💬' },
+    content_depth: { label: 'Depth', icon: '🧠' },
+    visual_quality: { label: 'Visual', icon: '🎨' },
+    pacing: { label: 'Pacing', icon: '⚡' },
   };
   Object.entries(breakdown).forEach(([key, val]) => {
-    const label = labels[key] || key.replace(/_/g,' ');
-    const color = scoreColor(val);
+    const m = meta[key] || { label: key.replace(/_/g,' '), icon: '📊' };
+    if (val === null || val === undefined) {
+      // N/A dimension (e.g. thumbnail when no thumbnail uploaded)
+      wrap.innerHTML += `
+        <div class="mini-bar">
+          <div class="mini-bar-top">
+            <span class="mini-bar-label">${m.icon} ${m.label}</span>
+            <span class="mini-bar-val" style="color:rgba(240,240,255,.3)">N/A</span>
+          </div>
+          <div class="mini-bar-track">
+            <div class="mini-bar-fill" style="width:0%;background:rgba(255,255,255,.1);"></div>
+          </div>
+          <div style="font-size:.65rem;color:rgba(240,240,255,.3);margin-top:2px;">Not uploaded</div>
+        </div>`;
+      return;
+    }
+    // Values are /10 — convert to % for display
+    const pct = Math.min(100, Math.max(0, val * 10));
+    const color = scoreColor(pct);
+    const display = Number.isInteger(val) ? `${val}/10` : val;
     wrap.innerHTML += `
       <div class="mini-bar">
         <div class="mini-bar-top">
-          <span class="mini-bar-label">${label}</span>
-          <span class="mini-bar-val" style="color:${color}">${val}</span>
+          <span class="mini-bar-label">${m.icon} ${m.label}</span>
+          <span class="mini-bar-val" style="color:${color}">${display}</span>
         </div>
         <div class="mini-bar-track">
-          <div class="mini-bar-fill" style="width:${val}%;background:${color}"></div>
+          <div class="mini-bar-fill" style="width:${pct}%;background:${color}"></div>
         </div>
       </div>`;
   });
@@ -533,6 +576,107 @@ function renderContentAnalysis(data) {
     html += `<div class="sec-title">Optimization Tips</div><div class="tip-list">${data.optimization_tips.map(t=>`<div class="tip-item cyan">💡 ${t}</div>`).join('')}</div>`;
   }
 
+  // Script line-by-line rewrite table
+  if (data.script_line_by_line?.length) {
+    html += `<div class="sec-title">✍️ Script Line-by-Line Fixes</div>
+    <table class="script-compare-table">
+      <thead><tr><th>Original Line</th><th>Problem</th><th>Rewrite</th></tr></thead>
+      <tbody>`;
+    data.script_line_by_line.forEach(row => {
+      html += `<tr>
+        <td>${row.original || '—'}</td>
+        <td>${row.problem || '—'}</td>
+        <td>${row.rewrite || '—'}</td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+  }
+
+  // Full 60-second rewritten script
+  if (data.full_60s_script) {
+    html += `<div class="sec-title">🎬 Full 60-Second Rewritten Script</div>
+    <button class="copy-script-btn" onclick="copyScript(this)">📋 Copy Script</button>
+    <div class="script-60s-box" id="full-script-box">${data.full_60s_script}</div>`;
+  }
+
+  // Story Arc visualization
+  if (data.story_arc) {
+    const arc = data.story_arc;
+    const verdictColor = arc.arc_verdict === 'Strong' ? '#43e97b' : arc.arc_verdict === 'Weak' ? '#f9ca24' : '#ff4757';
+    html += `<div class="sec-title">📖 Story Arc Analysis &nbsp;<span style="font-size:.78rem;font-weight:700;padding:3px 10px;border-radius:99px;background:rgba(0,0,0,.3);color:${verdictColor};border:1px solid ${verdictColor}40">${arc.arc_verdict || 'Unknown'}</span></div>
+    <div class="arc-row">
+      <div class="arc-phase setup">
+        <div class="arc-phase-label">① Setup (first 20%)</div>
+        <div>${arc.phase_1_setup || '—'}</div>
+      </div>
+      <div class="arc-arrow">→</div>
+      <div class="arc-phase tension">
+        <div class="arc-phase-label">② Tension</div>
+        <div>${arc.phase_2_tension || '—'}</div>
+      </div>
+      <div class="arc-arrow">→</div>
+      <div class="arc-phase resolution">
+        <div class="arc-phase-label">③ Resolution</div>
+        <div>${arc.phase_3_resolution || '—'}</div>
+      </div>
+    </div>`;
+    if (arc.emotional_peaks?.length) {
+      html += `<div style="margin-top:8px;font-size:.8rem;color:var(--muted)">⚡ <b style="color:var(--yellow)">Emotional peaks:</b> ${arc.emotional_peaks.join(' · ')}</div>`;
+    }
+    if (arc.storytelling_fix) {
+      html += `<div style="margin-top:8px;padding:10px 14px;background:rgba(108,99,255,.08);border-left:3px solid var(--primary);border-radius:0 8px 8px 0;font-size:.83rem">
+        🔧 <b>Fix:</b> ${arc.storytelling_fix}
+      </div>`;
+    }
+  }
+
+  // Upload Strategy
+  if (data.upload_strategy) {
+    const us = data.upload_strategy;
+    const allDays = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+    const bestDays = us.best_days || [];
+    html += `<div class="sec-title">📅 Upload Strategy & Metadata</div>
+    <div class="upload-strategy-card">
+      <div style="margin-bottom:14px">
+        <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px">Best Days to Post</div>
+        <div class="day-grid">
+          ${allDays.map(d => `<div class="day-chip${bestDays.includes(d) ? ' active' : ''}">${d.slice(0,3)}</div>`).join('')}
+        </div>
+      </div>`;
+    if (us.best_time_utc) {
+      html += `<div style="margin-bottom:14px">
+        <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px">Best Time (UTC)</div>
+        <span class="time-badge">🕐 ${us.best_time_utc} UTC</span>
+      </div>`;
+    }
+    if (us.reasoning) {
+      html += `<div style="font-size:.82rem;color:var(--muted);margin-bottom:14px;line-height:1.6">💡 ${us.reasoning}</div>`;
+    }
+    if (us.metadata_fixes) {
+      const mf = us.metadata_fixes;
+      html += `<div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px">Metadata Fixes</div>`;
+      if (mf.title_rewrite) {
+        html += `<div style="font-size:.78rem;color:var(--muted);margin-bottom:3px">📝 Rewritten Title:</div>
+        <div class="metadata-copyable" title="Click to select all">${mf.title_rewrite}</div>`;
+      }
+      if (mf.description_first_line) {
+        html += `<div style="font-size:.78rem;color:var(--muted);margin-bottom:3px">📄 Description Opening:</div>
+        <div class="metadata-copyable" title="Click to select all">${mf.description_first_line}</div>`;
+      }
+      if (mf.must_add_tags?.length) {
+        html += `<div style="font-size:.78rem;color:var(--muted);margin-bottom:6px">🏷 Must-Add Tags:</div>
+        <div class="seo-tags">${mf.must_add_tags.map(t=>`<span class="seo-tag">#${t}</span>`).join('')}</div>`;
+      }
+    }
+    if (us.chapter_timestamps?.length) {
+      html += `<div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:14px 0 8px">Chapter Timestamps</div>
+      <div class="chapter-list">
+        ${us.chapter_timestamps.map((ch,i) => `<div class="chapter-item">${i+1}. ${ch}</div>`).join('')}
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
   // Final verdict
   if (data.final_verdict) {
     html += `<div class="sec-title">⚖️ Final Verdict</div>
@@ -540,6 +684,22 @@ function renderContentAnalysis(data) {
   }
 
   document.getElementById('content-content').innerHTML = html;
+}
+
+// ── Copy Script helper ─────────────────────────────────────────────────────────
+function copyScript(btn) {
+  const box = document.getElementById('full-script-box');
+  if (!box) return;
+  navigator.clipboard.writeText(box.textContent).then(() => {
+    btn.textContent = '✅ Copied!';
+    setTimeout(() => { btn.textContent = '📋 Copy Script'; }, 2000);
+  }).catch(() => {
+    // Fallback: select text
+    const range = document.createRange();
+    range.selectNodeContents(box);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+  });
 }
 
 // ── Render: SEO ───────────────────────────────────────────────────────────────
@@ -582,12 +742,19 @@ function renderCompetitors(analysis, competitors) {
     html += `<div class="sec-title">Positioning Strategy</div><div class="positioning-box">🧭 ${analysis.positioning_advice}</div>`;
   }
   if (competitors?.length) {
-    html += `<div class="sec-title">Top Competing Videos</div><div class="comp-list">`;
+    html += `<div class="sec-title">Top Competing Videos This Week</div><div class="comp-list">`;
     competitors.forEach((c, i) => {
+      const fmt = n => n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'K' : String(n||0);
+      const pubDate = c.published_at ? new Date(c.published_at).toLocaleDateString() : '';
       html += `<div class="comp-item">
         <div class="comp-num">${i+1}</div>
         ${c.thumbnail ? `<img class="comp-thumb" src="${c.thumbnail}" alt="" />` : ''}
-        <div><div class="comp-title">${c.title}</div><div class="comp-channel">📺 ${c.channel}</div></div>
+        <div style="min-width:0;flex:1">
+          <div class="comp-title">${c.title}</div>
+          <div class="comp-channel">📺 ${c.channel}</div>
+          ${c.view_count ? `<div class="comp-views">👁 ${fmt(c.view_count)} views${pubDate ? ' · ' + pubDate : ''}</div>` : ''}
+          ${c.youtube_url ? `<a class="comp-watch-link" href="${c.youtube_url}" target="_blank" rel="noopener noreferrer">▶ Watch on YouTube</a>` : ''}
+        </div>
       </div>`;
     });
     html += '</div>';
@@ -598,25 +765,10 @@ function renderCompetitors(analysis, competitors) {
 
 // ── Show download button ───────────────────────────────────────────────────────
 function showDownloadBtn() {
-  let btn = document.getElementById('download-btn');
-  if (!btn) {
-    btn = document.createElement('button');
-    btn.id = 'download-btn';
-    btn.onclick = downloadReport;
-    btn.style.cssText = [
-      'display:flex','align-items:center','gap:8px','margin:0 auto',
-      'padding:12px 28px','background:linear-gradient(135deg,#6c63ff,#a855f7)',
-      'color:#fff','border:none','border-radius:10px','font-size:.95rem',
-      'font-weight:700','cursor:pointer','box-shadow:0 4px 20px rgba(108,99,255,.4)',
-      'transition:transform .15s,box-shadow .15s',
-    ].join(';');
-    btn.onmouseenter = () => { btn.style.transform='translateY(-2px)'; btn.style.boxShadow='0 6px 28px rgba(108,99,255,.6)'; };
-    btn.onmouseleave = () => { btn.style.transform=''; btn.style.boxShadow='0 4px 20px rgba(108,99,255,.4)'; };
-    const results = document.getElementById('results');
-    results.appendChild(btn);
-  }
-  btn.innerHTML = '📄 Download Full Report (DOCX)';
-  btn.style.display = 'flex';
+  const bar = document.getElementById('download-bar');
+  if (bar) bar.style.display = 'block';
+  const btn = document.getElementById('download-btn');
+  if (btn) { btn.textContent = '📄 Download Full Report (DOCX)'; btn.disabled = false; }
 }
 
 // ── API calls ─────────────────────────────────────────────────────────────────
@@ -690,6 +842,82 @@ async function analyzeVideo() {
     showDownloadBtn();
     document.getElementById('score-card').scrollIntoView({behavior:'smooth', block:'start'});
   } catch(e) { showError(e.message); }
+}
+
+async function analyzePostTiming() {
+  const file = document.getElementById('post-file').files[0];
+  if (!file) return showError('Please select an Analytics screenshot first.');
+  showLoader('Reading your YouTube Analytics screenshot…');
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch('/api/analyze-post-timing', {method:'POST', body:fd});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Post timing analysis failed');
+    _lastAnalysisData = data;
+    hideLoader(); showResults();
+    // Hide cards not relevant to post timing
+    ['score-card','meta-card','thumb-card','content-card','seo-card','competitor-card']
+      .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    renderPostTiming(data.timing_analysis);
+    showDownloadBtn();
+    document.getElementById('post-card').scrollIntoView({behavior:'smooth', block:'start'});
+  } catch(e) { showError(e.message); }
+}
+
+function renderPostTiming(data) {
+  if (!data) return;
+  const card = document.getElementById('post-card');
+  card.style.display = 'block';
+
+  const allDays = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+  const bestDays = data.best_days || [];
+  const bestTimes = data.best_times_utc || [];
+
+  let html = `
+    <div class="sec-title">📅 Best Days to Post</div>
+    <div class="day-grid">
+      ${allDays.map(d => `<div class="day-chip${bestDays.includes(d) ? ' active' : ''}">${d.slice(0,3)}</div>`).join('')}
+    </div>`;
+
+  if (bestTimes.length) {
+    html += `<div class="sec-title">🕐 Best Times (UTC)</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">
+      ${bestTimes.map(t => `<span class="time-badge">🕐 ${t} UTC</span>`).join('')}
+    </div>`;
+  }
+
+  if (data.audience_peak_hours) {
+    html += `<div class="sec-title">📊 What Your Analytics Shows</div>
+    <div class="hook-card"><div class="hook-verdict">${data.audience_peak_hours}</div></div>`;
+  }
+
+  if (data.reasoning) {
+    html += `<div class="sec-title">💡 Why These Times</div>
+    <div style="font-size:.88rem;line-height:1.65;color:rgba(240,240,255,.8);padding:12px 16px;background:rgba(108,99,255,.06);border-radius:10px;border:1px solid rgba(108,99,255,.15)">${data.reasoning}</div>`;
+  }
+
+  if (data.posting_plan) {
+    html += `<div class="sec-title">📋 Posting Plan</div>
+    <div style="font-size:.88rem;line-height:1.7;color:rgba(240,240,255,.85);padding:14px 18px;background:rgba(0,0,0,.25);border-radius:10px;border:1px solid var(--border);white-space:pre-wrap">${data.posting_plan}</div>`;
+  }
+
+  if (data.title_tips) {
+    html += `<div class="sec-title">📝 Title Tips for Your Niche</div>
+    <div class="tip-item cyan" style="margin-bottom:8px">💡 ${data.title_tips}</div>`;
+  }
+
+  if (data.description_tips) {
+    html += `<div class="sec-title">📄 Description SEO Tips</div>
+    <div class="tip-item green">✅ ${data.description_tips}</div>`;
+  }
+
+  if (data.tag_suggestions?.length) {
+    html += `<div class="sec-title">🏷 Suggested Tags</div>
+    <div class="seo-tags">${data.tag_suggestions.map(t => `<span class="seo-tag">#${t}</span>`).join('')}</div>`;
+  }
+
+  card.querySelector('#post-content').innerHTML = html;
 }
 
 async function analyzeFull() {
