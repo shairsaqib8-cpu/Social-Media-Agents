@@ -458,151 +458,326 @@ Return JSON only:
     return result
 
 
-def analyze_uploaded_video(video_path: str) -> dict:
-    client = _client()
-
-    # Extract frame at 3s
-    frame_path = None
+def _extract_video_frames(video_path: str) -> tuple[list[dict], float, int]:
+    """Extract frames at key retention points. Returns (frames, duration_sec, cut_count)."""
+    import cv2
+    frames = []
     duration_sec = 0
+    cut_count = 0
     try:
-        import cv2
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS) or 30
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        duration_sec = total / fps
-        cap.set(cv2.CAP_PROP_POS_FRAMES, min(int(3*fps), max(0, total-1)))
-        ret, frame = cap.read()
-        cap.release()
-        if ret:
+        duration_sec = total / fps if fps > 0 else 0
+
+        # Sample at: hook, 3s, 15s, 30s, 40%, 70%, near-end
+        sample_secs = [1, 3, 15, 30]
+        if duration_sec > 60:   sample_secs.append(round(duration_sec * 0.40))
+        if duration_sec > 120:  sample_secs.append(round(duration_sec * 0.70))
+        sample_secs.append(max(1, round(duration_sec - 5)))
+        sample_secs = sorted(set(s for s in sample_secs if 0 < s < duration_sec))
+
+        label_map = {}
+        if sample_secs:
+            label_map[sample_secs[0]] = "Hook (opening)"
+            if len(sample_secs) > 1: label_map[sample_secs[1]] = "3-second mark"
+            if len(sample_secs) > 2: label_map[sample_secs[2]] = "15-second mark"
+            if len(sample_secs) > 3: label_map[sample_secs[3]] = "30-second mark"
+            if len(sample_secs) > 4: label_map[sample_secs[4]] = "Mid video"
+            if len(sample_secs) > 5: label_map[sample_secs[5]] = "Late video"
+            label_map[sample_secs[-1]] = "Video ending"
+
+        prev_hist = None
+        for ts in sample_secs:
+            frame_no = min(int(ts * fps), total - 1)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_no)
+            ret, frame = cap.read()
+            if not ret:
+                continue
+
+            # Detect scene cuts via histogram comparison
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            hist = cv2.calcHist([gray], [0], None, [32], [0, 256])
+            cv2.normalize(hist, hist)
+            if prev_hist is not None:
+                diff = cv2.compareHist(prev_hist, hist, cv2.HISTCMP_BHATTACHARYYA)
+                if diff > 0.4:
+                    cut_count += 1
+            prev_hist = hist.copy()
+
             tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-            cv2.imwrite(tmp.name, frame)
+            cv2.imwrite(tmp.name, frame, [cv2.IMWRITE_JPEG_QUALITY, 72])
             tmp.close()
-            frame_path = tmp.name
+            b64_data = base64.standard_b64encode(open(tmp.name, "rb").read()).decode()
+            try: os.unlink(tmp.name)
+            except: pass
+
+            frames.append({
+                "timestamp_sec": ts,
+                "label": label_map.get(ts, f"{ts}s"),
+                "b64": b64_data,
+                "mime": "image/jpeg",
+            })
+        cap.release()
     except Exception:
         pass
+    return frames, duration_sec, cut_count
 
-    # Extract and transcribe audio
+
+def _analyze_frame_sequence(frames: list[dict], transcript: str,
+                             duration_sec: float, client: Groq) -> dict:
+    """
+    Watch the video at each key frame: assess visual quality AND whether
+    visuals match what's being spoken at that exact moment.
+    """
+    if not frames:
+        return {"avg_visual": 25, "segments": [], "worst_segment": "no frames",
+                "av_sync_verdict": "No frames extracted", "high_risk_moments": [],
+                "broken_sync_moments": []}
+
+    words = transcript.split() if transcript else []
+    total_words = len(words)
+    segment_scores = []
+    segments_report = []
+
+    for frm in frames[:6]:  # cap at 6 to respect rate limits
+        ts = frm["timestamp_sec"]
+        label = frm["label"]
+
+        # Approximate words spoken at this timestamp
+        spoken_here = ""
+        if total_words > 0 and duration_sec > 0:
+            progress = ts / duration_sec
+            start_w = max(0, int(progress * total_words) - 15)
+            spoken_here = " ".join(words[start_w:start_w + 30])
+
+        facts = _get_frame_facts(frm["b64"], frm["mime"], client)
+        vscore = _score_visual(facts)
+        segment_scores.append(vscore)
+
+        sync_prompt = f"""You are reviewing a YouTube video at the {label} (timestamp {ts}s).
+
+WHAT THE CAMERA SHOWS (visual facts):
+{json.dumps(facts)}
+
+WHAT IS BEING SAID RIGHT NOW:
+"{spoken_here if spoken_here else 'NO AUDIO / SILENT at this point'}"
+
+Answer with JSON only — no markdown:
+{{
+  "what_viewer_sees": "<one sentence: what is literally on screen>",
+  "what_creator_says": "<one sentence: what is being said>",
+  "sync_rating": "<Excellent/Good/Weak/Broken>",
+  "sync_problem": "<null if sync good, else: exact mismatch and viewer impact>",
+  "retention_risk": "<Low/Medium/High>"
+}}"""
+
+        try:
+            r = _groq_call(client,
+                model=VISION_MODEL,
+                messages=[{"role":"user","content":[
+                    {"type":"image_url","image_url":{"url":f"data:{frm['mime']};base64,{frm['b64']}"}},
+                    {"type":"text","text":sync_prompt}
+                ]}],
+                max_tokens=300, temperature=0.05,
+            )
+            seg = _parse_json(r.choices[0].message.content)
+        except Exception:
+            seg = {"sync_rating": "Unknown", "retention_risk": "Unknown",
+                   "what_viewer_sees": "Analysis failed", "what_creator_says": spoken_here[:60]}
+
+        seg["timestamp"] = ts
+        seg["label"] = label
+        seg["visual_score"] = vscore
+        segments_report.append(seg)
+
+    avg_visual = round(sum(segment_scores) / len(segment_scores)) if segment_scores else 25
+    worst = min(segments_report, key=lambda s: s.get("visual_score", 50))
+    broken = [s for s in segments_report if s.get("sync_rating") in ("Weak", "Broken")]
+    risky  = [s for s in segments_report if s.get("retention_risk") == "High"]
+
+    if len(broken) >= max(1, len(segments_report) // 2):
+        av_sync = "Poor — visuals frequently disconnect from what is being said"
+    elif broken:
+        av_sync = f"Inconsistent — {len(broken)} of {len(segments_report)} segments have sync problems"
+    else:
+        av_sync = "Good — visuals support the audio throughout"
+
+    return {
+        "avg_visual": avg_visual,
+        "segments": segments_report,
+        "worst_segment": f"{worst.get('label','?')} ({worst.get('visual_score','?')}/72)",
+        "av_sync_verdict": av_sync,
+        "high_risk_moments": [f"{s['label']} at {s['timestamp']}s" for s in risky],
+        "broken_sync_moments": [
+            f"{s['label']}: {s.get('sync_problem','mismatch')}" for s in broken
+        ],
+    }
+
+
+def _pacing_score(cut_count: int, duration_sec: float, wpm: int) -> int:
+    """Score edit pacing — YouTube rewards fast, energetic cutting."""
+    s = 45
+    if duration_sec > 0:
+        cpm = cut_count / (duration_sec / 60)
+        if cpm < 1:    s -= 20
+        elif cpm < 3:  s -= 10
+        elif cpm < 6:  s += 0
+        elif cpm < 12: s += 12
+        else:          s += 18
+    if wpm > 0:
+        if wpm < 100:            s -= 10
+        elif wpm > 200:          s -= 8
+        elif 130 <= wpm <= 170:  s += 10
+    return max(5, min(90, s))
+
+
+def analyze_uploaded_video(video_path: str) -> dict:
+    client = _client()
+
+    # ── Step 1: Watch the video — extract frames at key moments, detect cuts ──
+    frames, duration_sec, cut_count = _extract_video_frames(video_path)
+
+    # ── Step 2: Transcribe audio ──
     transcript = _extract_audio(video_path)
     sig = _audio_signals(transcript, duration_sec)
 
-    # Compute all sub-scores in Python
+    # ── Step 3: Analyze each frame + audio-visual sync ──
+    vision = _analyze_frame_sequence(frames, transcript, duration_sec, client)
+
+    # ── Step 4: Score everything in Python ──
     hook_score   = _score_audio(sig)
     audio_score  = hook_score
-
-    facts = {}
-    visual_score = 30   # default: penalise if no frame
-    if frame_path:
-        b64, mime = _b64(frame_path)
-        facts = _get_frame_facts(b64, mime, client)
-        visual_score = _score_visual(facts)
-
-    # No title/SEO for raw upload — use neutral 50
-    title_score = 50
-    seo_score   = 50
+    visual_score = vision["avg_visual"]
+    pacing       = _pacing_score(cut_count, duration_sec, sig["wpm"])
+    title_score  = 50
+    seo_score    = 50
 
     content = _content_score(hook_score, audio_score, visual_score, title_score, seo_score)
-
-    # Apply same blend as URL mode — unproven content gets a 25/100 performance prior
-    # (no audience has validated this yet, so it cannot score as high as proven viral content)
     unproven_perf = 25
     final = max(2, min(98, round(unproven_perf * 0.60 + content * 0.40)))
     grade = _grade(final)
 
-    # Build critique prompt
-    frame_facts_str = json.dumps(facts) if facts else "Frame extraction failed"
-    b64_content = []
-    if frame_path:
-        b64i, mimei = _b64(frame_path)
-        b64_content = [{"type":"image_url","image_url":{"url":f"data:{mimei};base64,{b64i}"}}]
+    cuts_per_min = round(cut_count / (duration_sec / 60), 1) if duration_sec > 0 else 0
 
-    critique = f"""Video upload analysis. Score: {final}/100 ({grade}).
+    # ── Step 5: Build critique with everything the agent observed ──
+    segs_text = ""
+    for s in vision["segments"]:
+        segs_text += (f"\n  [{s['label']} @ {s['timestamp']}s] "
+                      f"Visual:{s.get('visual_score','?')}/72 | "
+                      f"Sync:{s.get('sync_rating','?')} | Risk:{s.get('retention_risk','?')}")
+        if s.get("sync_problem"):
+            segs_text += f"\n    → {s['sync_problem']}"
 
-HOW SCORE WAS COMPUTED (do not change these):
-- Content quality score: {content}/100
-  * Hook/audio score: {hook_score}/100
-    - Transcript present: {sig['transcript_present']}
-    - Starts with generic opener ("hey guys / welcome back"): {sig['starts_generic']}
-    - Has strong hook trigger in first 30s: {sig['has_hook_trigger']}
-    - Filler word percentage: {sig['filler_pct']}%
-    - Words per minute: {sig['wpm']} (ideal: 130-160)
-  * Visual score: {visual_score}/100
-    - Frame facts: {frame_facts_str}
-- Performance prior: {unproven_perf}/100 (no YouTube data — content is unproven)
-- FINAL SCORE = 60% performance ({unproven_perf}) + 40% content ({content}) = {final}/100
+    critique = f"""I watched this video at {len(frames)} key moments. This is what I observed.
 
-Transcript (first 800 chars): {transcript[:800] if transcript else "NO AUDIO DETECTED — video may be silent or audio extraction failed"}
+DURATION: {round(duration_sec)}s | SCENE CUTS: {cut_count} ({cuts_per_min}/min)
 
-Write a brutal, specific audit explaining exactly why each number is what it is.
-If no transcript: explain what that means for viewer retention and what to fix.
-If frame shows no face/bad lighting/no energy: say it directly.
+AUDIO:
+- Starts with generic opener: {sig['starts_generic']}
+- Strong hook trigger in first 30s: {sig['has_hook_trigger']}
+- Filler words: {sig['filler_pct']}% | Speed: {sig['wpm']} wpm
+
+VISUAL + SYNC REVIEW (what I saw at each moment):{segs_text}
+
+OVERALL A/V SYNC: {vision['av_sync_verdict']}
+HIGH DROP-OFF RISK MOMENTS: {vision['high_risk_moments'] or 'None detected'}
+SYNC FAILURES: {vision['broken_sync_moments'] or 'None'}
+
+SCORES (do not change):
+Hook:{hook_score} | Visual:{visual_score} | Pacing:{pacing} | Content:{content} | Final:{final} ({grade})
+
+TRANSCRIPT (first 1200 chars):
+{transcript[:1200] if transcript else "NO AUDIO DETECTED"}
+
+Write a brutal, timestamped critique. Reference specific moments you observed.
+Name the exact second things go wrong. Do not invent positives.
 
 Return JSON only:
 {{
   "virality_score": {final},
   "grade": "{grade}",
-  "first_impression": "<what a cold viewer sees and hears in first 3 seconds — be specific>",
+  "first_impression": "<what a cold viewer sees and hears in seconds 0-3 — be specific>",
   "breakdown": {{
     "hook_strength": {hook_score},
     "visual_quality": {visual_score},
     "engagement_signals": {unproven_perf},
-    "pacing": {audio_score},
+    "pacing": {pacing},
     "content_depth": {content}
   }},
+  "video_watch_report": {{
+    "worst_moment": "{vision['worst_segment']}",
+    "av_sync_verdict": "{vision['av_sync_verdict']}",
+    "edit_pacing_verdict": "<{cuts_per_min} cuts/min — engaging or boring — what to change>",
+    "retention_curve": "<predict exact moments viewers drop off and why, based on what was observed>",
+    "segment_verdicts": [{{"label": "...", "problem": "..."}}]
+  }},
   "audio_analysis": {{
-    "verdict": "<is the audio professional or amateurish — name specific problems>",
-    "transcript_summary": "<what was actually said in first 30 seconds>",
-    "filler_word_problem": "<{sig['filler_pct']}% filler words — specific impact>",
-    "pacing_verdict": "<{sig['wpm']} wpm — too fast/slow/right — effect on retention>",
-    "audio_visual_sync": "<does what is SAID match what is SHOWN on screen — is there alignment or disconnect?>",
-    "script_quality": "<tight and valuable or rambling — what exact lines should be cut>"
+    "verdict": "<professional or amateurish — name specific problems heard>",
+    "transcript_summary": "<what was said in first 30 seconds>",
+    "filler_word_problem": "<{sig['filler_pct']}% fillers — exact impact on credibility>",
+    "pacing_verdict": "<{sig['wpm']} wpm — effect on retention>",
+    "audio_visual_sync": "<full sync verdict with specific broken moments named>",
+    "script_quality": "<tight/rambling — what lines to cut>"
   }},
   "hook_analysis": {{
-    "verdict": "<did the opening earn viewer attention or lose it — why exactly>",
-    "what_top_creators_do_instead": "<how a top creator in this niche would open this same video>",
-    "rewritten_opening": "<exact word-for-word script + visual description for first 20 seconds>"
+    "verdict": "<did the first 3 seconds earn attention — be harsh>",
+    "what_top_creators_do_instead": "<how a top creator would open this video>",
+    "rewritten_opening": "<word-for-word replacement script for first 20 seconds>"
   }},
-  "production_issues": ["<specific production problem from facts>", "<another>", "<another>"],
-  "optimization_tips": ["<specific fix — audio, visual, or script>", "<fix 2>", "<fix 3>", "<fix 4>", "<fix 5>"],
+  "production_issues": ["<timestamped specific issue>", "<another>", "<another>"],
+  "optimization_tips": ["<fix 1>", "<fix 2>", "<fix 3>", "<fix 4>", "<fix 5>"],
   "viral_potential": "<Low/Medium/High/Very High>",
-  "estimated_improvement": "<realistic score and view count change if all issues fixed>"
+  "estimated_improvement": "<realistic view count if all fixes applied — and why>"
 }}"""
 
-    messages = [{"role":"system","content":CRITIC_SYSTEM}]
-    if b64_content:
-        messages.append({"role":"user","content": b64_content + [{"type":"text","text":critique}]})
+    hook_frame = frames[0] if frames else None
+    if hook_frame:
+        messages = [
+            {"role":"system","content":CRITIC_SYSTEM},
+            {"role":"user","content":[
+                {"type":"image_url","image_url":{"url":f"data:{hook_frame['mime']};base64,{hook_frame['b64']}"}},
+                {"type":"text","text":critique}
+            ]}
+        ]
         model = VISION_MODEL
     else:
-        messages.append({"role":"user","content": critique})
+        messages = [{"role":"system","content":CRITIC_SYSTEM},
+                    {"role":"user","content":critique}]
         model = TEXT_MODEL
 
     try:
-        r = _groq_call(client, model=model, messages=messages, max_tokens=1800, temperature=0.15)
+        r = _groq_call(client, model=model, messages=messages, max_tokens=2400, temperature=0.15)
         result = _parse_json(r.choices[0].message.content)
     except Exception:
         result = {}
 
-    # Always enforce Python-computed values
     result["virality_score"] = final
     result["grade"] = grade
     result["breakdown"] = {
         "hook_strength":      hook_score,
         "visual_quality":     visual_score,
         "engagement_signals": unproven_perf,
-        "pacing":             audio_score,
+        "pacing":             pacing,
         "content_depth":      content,
+    }
+    result["video_stats"] = {
+        "duration_sec":    round(duration_sec),
+        "frames_analyzed": len(frames),
+        "scene_cuts":      cut_count,
+        "cuts_per_min":    cuts_per_min,
+        "av_sync":         vision["av_sync_verdict"],
+        "high_risk_moments": vision["high_risk_moments"],
     }
     if "audio_analysis" not in result:
         result["audio_analysis"] = {
-            "verdict": "Audio analysis failed — check video encoding",
+            "verdict":          "Audio analysis unavailable",
             "transcript_summary": transcript[:200] if transcript else "No audio detected",
             "filler_word_problem": f"{sig['filler_pct']}% filler words",
-            "pacing_verdict": f"{sig['wpm']} words per minute",
-            "audio_visual_sync": "Cannot assess without audio transcript",
-            "script_quality": "Cannot assess without audio transcript",
+            "pacing_verdict":   f"{sig['wpm']} wpm",
+            "audio_visual_sync": vision["av_sync_verdict"],
+            "script_quality":   "Cannot assess",
         }
-    if frame_path:
-        try: os.unlink(frame_path)
-        except: pass
     return result
 
 

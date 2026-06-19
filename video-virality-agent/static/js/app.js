@@ -293,6 +293,63 @@ function renderThumbnailAnalysis(data) {
   `;
 }
 
+// ── Render: Video Stats Bar ────────────────────────────────────────────────────
+function renderVideoStats(stats) {
+  if (!stats) return;
+  const card = document.getElementById('content-card');
+  const existing = document.getElementById('video-stats-bar');
+  if (existing) existing.remove();
+  const bar = document.createElement('div');
+  bar.id = 'video-stats-bar';
+  bar.style.cssText = 'display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;padding:14px 16px;background:rgba(108,99,255,.08);border:1px solid rgba(108,99,255,.2);border-radius:12px;';
+  const chips = [
+    ['🎬', 'Duration', `${stats.duration_sec}s`],
+    ['🔍', 'Frames analyzed', stats.frames_analyzed],
+    ['✂️', 'Scene cuts', stats.scene_cuts],
+    ['⚡', 'Cuts/min', stats.cuts_per_min],
+  ];
+  bar.innerHTML = chips.map(([ico, lbl, val]) =>
+    `<div style="text-align:center;min-width:80px">
+       <div style="font-size:1.1rem">${ico}</div>
+       <div style="font-size:.95rem;font-weight:700;color:#6c63ff">${val}</div>
+       <div style="font-size:.72rem;color:#888;margin-top:2px">${lbl}</div>
+     </div>`
+  ).join('');
+  if (stats.high_risk_moments?.length) {
+    bar.innerHTML += `<div style="flex:1;min-width:200px;font-size:.78rem;color:#ff4757;margin-top:4px">
+      ⚠️ <b>Drop-off risk:</b> ${stats.high_risk_moments.join(' · ')}
+    </div>`;
+  }
+  card.insertBefore(bar, card.querySelector('#content-content'));
+}
+
+// ── Render: Video Watch Report ─────────────────────────────────────────────────
+function renderWatchReport(report) {
+  if (!report) return '';
+  let html = '<div class="sec-title">🎥 Frame-by-Frame Watch Report</div>';
+
+  if (report.av_sync_verdict) {
+    const syncColor = report.av_sync_verdict.toLowerCase().includes('poor') ? '#ff4757'
+                    : report.av_sync_verdict.toLowerCase().includes('inconsistent') ? '#f9ca24' : '#43e97b';
+    html += `<div style="padding:10px 14px;background:rgba(0,0,0,.25);border-left:3px solid ${syncColor};border-radius:8px;margin-bottom:12px;font-size:.83rem">
+      <b>Audio-Visual Sync:</b> ${report.av_sync_verdict}
+    </div>`;
+  }
+  if (report.edit_pacing_verdict) {
+    html += `<div style="font-size:.83rem;color:#aaa;margin-bottom:12px">✂️ <b>Edit Pacing:</b> ${report.edit_pacing_verdict}</div>`;
+  }
+  if (report.retention_curve) {
+    html += `<div style="font-size:.83rem;color:#f9ca24;margin-bottom:12px">📉 <b>Retention Forecast:</b> ${report.retention_curve}</div>`;
+  }
+  if (report.segment_verdicts?.length) {
+    html += `<div style="font-size:.78rem;color:#888;margin-bottom:6px">SEGMENT ISSUES</div>
+    <div class="tip-list">${report.segment_verdicts.map(s =>
+      `<div class="tip-item red">🔴 <b>${s.label}:</b> ${s.problem}</div>`
+    ).join('')}</div>`;
+  }
+  return html;
+}
+
 // ── Render: Content Analysis ──────────────────────────────────────────────────
 function renderContentAnalysis(data) {
   const card = document.getElementById('content-card');
@@ -301,13 +358,39 @@ function renderContentAnalysis(data) {
   const ha = data.hook_analysis || {};
   let html = '';
 
-  if (ha.verdict || ha.first_line) {
+  // Video stats bar (upload mode only)
+  if (data.video_stats) renderVideoStats(data.video_stats);
+
+  // Frame-by-frame watch report
+  if (data.video_watch_report) html += renderWatchReport(data.video_watch_report);
+
+  if (data.first_impression) {
+    html += `<div class="sec-title">First Impression (0-3 seconds)</div>
+    <div class="hook-card"><div class="hook-verdict">${data.first_impression}</div></div>`;
+  }
+
+  if (ha.verdict || ha.rewritten_opening) {
     html += `<div class="sec-title">Hook Analysis</div>
     <div class="hook-card">
-      ${ha.first_line ? `<div class="hook-quote">"${ha.first_line}"</div>` : ''}
       ${ha.verdict ? `<div class="hook-verdict">${ha.verdict}</div>` : ''}
-      ${ha.rewrite ? `<div class="hook-rewrite">💡 Suggested rewrite: ${ha.rewrite}</div>` : ''}
+      ${ha.what_top_creators_do_instead ? `<div style="font-size:.8rem;color:#888;margin-top:8px">💡 Top creators: ${ha.what_top_creators_do_instead}</div>` : ''}
+      ${ha.rewritten_opening ? `<div class="hook-rewrite">📝 Rewritten hook: ${ha.rewritten_opening}</div>` : ''}
     </div>`;
+  }
+
+  if (data.audio_analysis) {
+    const aa = data.audio_analysis;
+    html += `<div class="sec-title">Audio Analysis</div><div class="tip-list">`;
+    if (aa.verdict)            html += `<div class="tip-item ${aa.verdict?.toLowerCase().includes('amateur') ? 'red':'cyan'}">🎙️ ${aa.verdict}</div>`;
+    if (aa.pacing_verdict)     html += `<div class="tip-item yellow">⚡ ${aa.pacing_verdict}</div>`;
+    if (aa.filler_word_problem) html += `<div class="tip-item red">🚨 ${aa.filler_word_problem}</div>`;
+    if (aa.audio_visual_sync)  html += `<div class="tip-item ${aa.audio_visual_sync?.toLowerCase().includes('poor') ? 'red':'cyan'}">🔗 Sync: ${aa.audio_visual_sync}</div>`;
+    if (aa.script_quality)     html += `<div class="tip-item yellow">📄 ${aa.script_quality}</div>`;
+    html += `</div>`;
+  }
+
+  if (data.production_issues?.length) {
+    html += `<div class="sec-title">Production Issues</div><div class="tip-list">${data.production_issues.map(i=>`<div class="tip-item red">⚠️ ${i}</div>`).join('')}</div>`;
   }
   if (ta.issues?.length) {
     html += `<div class="sec-title">Title Issues</div><div class="tip-list">${ta.issues.map(i=>`<div class="tip-item red">⚠️ ${i}</div>`).join('')}</div>`;
