@@ -404,7 +404,7 @@ async function analyzeURL() {
 async function analyzeThumbnail() {
   const file = document.getElementById('thumb-file').files[0];
   if (!file) return showError('Please select a thumbnail image first.');
-  showLoader('Analyzing thumbnail with Claude Vision…');
+  showLoader('Analyzing thumbnail with Vision AI…');
   try {
     const fd = new FormData(); fd.append('file', file);
     const res = await fetch('/api/analyze-thumbnail', {method:'POST', body:fd});
@@ -412,8 +412,15 @@ async function analyzeThumbnail() {
     if (!res.ok) throw new Error(data.detail || 'Thumbnail analysis failed');
     hideLoader(); showResults();
     const ta = data.thumbnail_analysis;
+    // Clear stale breakdown bars from any previous URL/video analysis
+    document.getElementById('breakdown-bars').innerHTML = '';
     renderScoreRing(ta.score, ta.grade, ta.ctr_potential + ' CTR', null);
     renderThumbnailAnalysis(ta);
+    // Hide content/competitor cards that don't apply to thumbnail-only
+    ['content-card','seo-card','competitor-card','meta-card'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
     document.getElementById('score-card').scrollIntoView({behavior:'smooth', block:'start'});
   } catch(e) { showError(e.message); }
 }

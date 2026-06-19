@@ -265,24 +265,28 @@ def _get_frame_facts(b64_img: str, mime: str, client: Groq) -> dict:
 
 
 def _score_visual(facts: dict) -> int:
-    """Convert visual facts to 0-100 score."""
-    s = 30  # start low — earn it
-    if facts.get("has_face"):             s += 12
-    if facts.get("face_emotion_strong"):  s += 10
-    if facts.get("has_text_overlay"):     s += 6
-    if facts.get("text_readable_on_mobile"): s += 6
-    if facts.get("good_lighting"):        s += 8
-    if facts.get("high_contrast"):        s += 5
-    if facts.get("subject_in_focus"):     s += 5
-    if facts.get("background_clean"):     s += 5
-    if facts.get("looks_professional"):   s += 8
-    if facts.get("high_energy_visible"):  s += 8
-    if facts.get("would_stop_scroll"):    s += 7
-    # Hard penalties
-    if not facts.get("has_face"):            s -= 8
-    if not facts.get("good_lighting"):       s -= 10
-    if not facts.get("looks_professional"):  s -= 8
-    return max(5, min(95, s))
+    """Convert visual facts to 0-100 score. Ceiling is 72 — no thumbnail
+    earns an A without proven CTR data."""
+    s = 20  # start harsh — most thumbnails are mediocre
+    if facts.get("has_face"):                 s += 10
+    if facts.get("face_emotion_strong"):      s += 10
+    if facts.get("has_text_overlay"):         s += 8
+    if facts.get("text_readable_on_mobile"):  s += 8
+    if facts.get("good_lighting"):            s += 7
+    if facts.get("high_contrast"):            s += 6
+    if facts.get("subject_in_focus"):         s += 5
+    if facts.get("looks_professional"):       s += 7
+    if facts.get("high_energy_visible"):      s += 8
+    if facts.get("would_stop_scroll"):        s += 8
+    if facts.get("background_clean"):         s += 3
+    # Hard penalties — these are fatal for YouTube CTR
+    if not facts.get("has_face"):             s -= 10  # faceless = no emotional hook
+    if not facts.get("has_text_overlay"):     s -= 10  # no text = viewer has no context
+    if not facts.get("good_lighting"):        s -= 12  # dark/muddy = instant skip
+    if not facts.get("looks_professional"):   s -= 12  # amateur look = brand damage
+    if not facts.get("high_contrast"):        s -= 6   # blends into feed
+    if not facts.get("would_stop_scroll"):    s -= 8   # the only metric that matters
+    return max(5, min(72, s))
 
 
 def _score_title(title: str, tags: list, description: str) -> tuple[int, int]:
