@@ -14,7 +14,7 @@ SCORING PHILOSOPHY:
   similarly on content quality, while URL additionally reflects real performance.
 """
 
-import os, re, json, base64, tempfile, math
+import os, re, json, base64, tempfile, math, time
 from pathlib import Path
 from groq import Groq
 
@@ -38,6 +38,20 @@ def _client() -> Groq:
     if not key:
         raise ValueError("GROQ_API_KEY not set in .env")
     return Groq(api_key=key)
+
+
+def _groq_call(client: Groq, **kwargs):
+    """Groq chat completion with automatic retry on rate-limit (429)."""
+    for attempt in range(3):
+        try:
+            return client.chat.completions.create(**kwargs)
+        except Exception as e:
+            if "429" in str(e) or "rate" in str(e).lower():
+                wait = 20 * (attempt + 1)
+                time.sleep(wait)
+            else:
+                raise
+    raise RuntimeError("Groq rate limit — please wait 60 seconds and try again.")
 
 
 def _parse_json(text: str) -> dict:
@@ -80,7 +94,7 @@ def _parse_json(text: str) -> dict:
     # Strategy 4: ask AI to fix its own broken JSON using a cheap model call
     try:
         client = _client()
-        repair = client.chat.completions.create(
+        repair = _groq_call(client,
             model=TEXT_MODEL,
             messages=[{"role": "user", "content":
                 f"Fix this broken JSON so it is valid. Return ONLY the fixed JSON, nothing else:\n{text[:3000]}"}],
@@ -225,7 +239,7 @@ def _score_audio(sig: dict) -> int:
 
 def _get_frame_facts(b64_img: str, mime: str, client: Groq) -> dict:
     """Ask vision model for objective yes/no facts only (temperature 0.05)."""
-    r = client.chat.completions.create(
+    r = _groq_call(client,
         model=VISION_MODEL,
         messages=[{"role":"user","content":[
             {"type":"image_url","image_url":{"url":f"data:{mime};base64,{b64_img}"}},
@@ -306,7 +320,7 @@ def analyze_thumbnail(image_path: str) -> dict:
     visual = _score_visual(facts)
     grade  = _grade(visual)
 
-    r = client.chat.completions.create(
+    r = _groq_call(client,
         model=TEXT_MODEL,
         messages=[
             {"role":"system","content":CRITIC_SYSTEM},
@@ -421,7 +435,7 @@ Return JSON only:
   "if_reshot_today": "<realistic view count if ALL fixes applied — and exactly why>"
 }}"""
 
-    r = client.chat.completions.create(
+    r = _groq_call(client,
         model=TEXT_MODEL,
         messages=[{"role":"system","content":CRITIC_SYSTEM}, {"role":"user","content":prompt}],
         max_tokens=2000, temperature=0.15,
@@ -558,7 +572,7 @@ Return JSON only:
         model = TEXT_MODEL
 
     try:
-        r = client.chat.completions.create(model=model, messages=messages, max_tokens=1800, temperature=0.15)
+        r = _groq_call(client, model=model, messages=messages, max_tokens=1800, temperature=0.15)
         result = _parse_json(r.choices[0].message.content)
     except Exception:
         result = {}
@@ -593,7 +607,7 @@ def compare_competitors(main_title: str, competitors: list[dict]) -> dict:
         return {"summary":"No competitor data.", "insights":[]}
     client = _client()
     lines = "\n".join(f'{i+1}. "{c["title"]}" by {c["channel"]}' for i,c in enumerate(competitors))
-    r = client.chat.completions.create(
+    r = _groq_call(client,
         model=TEXT_MODEL,
         messages=[
             {"role":"system","content":CRITIC_SYSTEM},
